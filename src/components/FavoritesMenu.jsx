@@ -1,99 +1,96 @@
 import { motion } from "framer-motion";
-import { Star, StarOff, Volume2, Headphones, FolderOpen } from "lucide-react";
+import { Star, Volume2, Headphones, FolderOpen, X } from "lucide-react";
 
 export default function FavoritesMenu({ 
-  isOpen, 
-  favorites, 
-  folderFavorites, 
-  audioList, 
-  playTrack, 
-  playAudio, 
-  toggleFavorite, 
-  toggleFolderFavorite, 
-  toggleMenu,
-  changeFolder
+  isOpen, favorites, folderFavorites, audioList, playTrack, playAudio, toggleFavorite, toggleFolderFavorite, toggleMenu, changeFolder
 }) {
-  // SÉCURITÉ : On utilise ?. et || [] pour garantir que ça ne plante pas si les props sont undefined
-  const favoriteFiles = favorites?.map((favUrl) => 
-      audioList?.find((f) => f.url === favUrl)
-    ).filter(Boolean) || [];
+  const favoriteFiles = favorites?.map((url) => audioList?.find((f) => f.url === url)).filter(Boolean) || [];
 
   return (
     <motion.div
-      initial={{ x: -250 }}
-      animate={{ x: isOpen ? 0 : -250 }}
-      transition={{ type: "tween", duration: 0.6 }}
-      className="fixed top-0 left-0 h-full w-[250px] bg-black/40 backdrop-blur-sm border-r border-white/10 p-4 z-40 flex flex-col gap-4 overflow-y-auto"
+      initial={{ x: -340 }}
+      animate={{ x: isOpen ? 0 : -340 }}
+      transition={{ type: "spring", damping: 25, stiffness: 200 }}
+      // Largeur passée à w-[320px] pour donner de l'espace aux textes et icônes
+      className="fixed top-0 left-0 h-full w-[320px] bg-[#0d0b14]/90 backdrop-blur-xl border-r border-white/10 p-5 z-50 flex flex-col gap-5 overflow-y-auto shadow-[5px_0_30px_rgba(0,0,0,0.5)]"
     >
-      <h2 className="text-yellow-400 text-sm font-bold" onClick={toggleMenu}>⭐ Mes Favoris</h2>
-
-      {/* --- Dossiers Favoris --- */}
-      <h3 className="text-white/80 text-xs font-semibold mt-2">Dossiers Favoris</h3>
-      <div className="flex flex-col gap-2">
-        {/* SÉCURITÉ : ?.length */}
-        {folderFavorites?.length === 0 && (
-          <span className="text-xs text-white/50">Aucun dossier favori.</span>
-        )}
-        
-        {/* SÉCURITÉ : ?.map */}
-        {folderFavorites?.map((favPath) => {
-          const pathParts = favPath?.split("/").filter(p => p.length > 0) || [];
-          const folderName = pathParts.length > 0 ? pathParts.pop() : "Racine";
-
-          return (
-            <div
-              key={favPath}
-              onClick={() => changeFolder(favPath)}
-              className="relative bg-black/30 backdrop-blur-sm border border-white/10 rounded-lg p-3 flex flex-col items-center justify-center text-center text-xs cursor-pointer hover:ring-2 hover:ring-yellow-500 transition group"
-            >
-              <div className="absolute top-1 right-1 text-yellow-400 z-10">
-                <button onClick={(e) => { e.stopPropagation(); toggleFolderFavorite(favPath); }}>
-                  <Star size={14} /> 
-                </button>
-              </div>
-
-              <FolderOpen size={28} className="text-yellow-400 mb-1 group-hover:scale-110 transition" />
-              <div className="truncate max-w-[90%]">{folderName}</div>
-            </div>
-          );
-        })}
+      <div className="flex items-center justify-between border-b border-white/5 pb-3">
+        <div className="flex items-center gap-2 text-amber-400 font-bold text-xs uppercase tracking-wider">
+          <Star size={14} className="fill-current" />
+          <span>Favoris</span>
+        </div>
+        <button onClick={toggleMenu} className="text-white/40 hover:text-white transition-colors">
+          <X size={16} />
+        </button>
       </div>
 
-      {/* --- Sons Favoris --- */}
-      <h3 className="text-white/80 text-xs font-semibold mt-4">Sons Favoris</h3>
-      
-      {favoriteFiles?.length === 0 && folderFavorites?.length > 0 && (
-        <span className="text-xs text-white/50">Aucun son favori pour l'instant.</span>
-      )}
-      {favoriteFiles?.length === 0 && folderFavorites?.length === 0 && (
-        <span className="text-xs text-white/50">Aucun favori pour l'instant.</span>
-      )}
+      {/* Catégorie Dossiers */}
+      <div className="space-y-2">
+        <h3 className="text-[10px] uppercase tracking-wider font-bold text-white/30">Dossiers</h3>
+        {folderFavorites?.length === 0 && (
+          <span className="text-xs text-white/30 block italic pl-1">Aucun sous-dossier</span>
+        )}
+        <div className="grid grid-cols-1 gap-2">
+          {folderFavorites?.map((favPath) => {
+            const folderName = favPath?.split("/").filter(Boolean).pop() || "Racine";
+            return (
+              <div
+                key={favPath}
+                onClick={() => { changeFolder(favPath); toggleMenu(); }}
+                className="group flex items-center justify-between bg-white/[0.02] border border-white/5 rounded-lg p-2.5 text-xs cursor-pointer hover:border-amber-500/30 hover:bg-amber-500/[0.02] transition-all"
+              >
+                <div className="flex items-center gap-2 truncate text-white/70 group-hover:text-white max-w-[80%]">
+                  <FolderOpen size={14} className="text-amber-400 shrink-0" />
+                  <span className="truncate">{folderName}</span>
+                </div>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); toggleFolderFavorite(favPath); }}
+                  className="text-amber-400 opacity-60 hover:opacity-100 p-1"
+                >
+                  <Star size={12} className="fill-current" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
-      <div className="flex flex-col gap-2">
-        {favoriteFiles?.map((file) => {
-          return (
+      {/* Catégorie Sons */}
+      <div className="space-y-2 flex-1">
+        <h3 className="text-[10px] uppercase tracking-wider font-bold text-white/30">Pistes Audio</h3>
+        {favoriteFiles.length === 0 && (
+          <span className="text-xs text-white/30 block italic pl-1">Aucune piste favorie</span>
+        )}
+        <div className="flex flex-col gap-2">
+          {favoriteFiles.map((file) => (
             <div
               key={file.name}
               onClick={() => playTrack(file.url)}
-              className="relative bg-black/30 backdrop-blur-sm border border-white/10 rounded-lg p-3 flex flex-col items-center justify-center text-center text-xs cursor-pointer hover:ring-2 hover:ring-purple-500 transition group"
+              className="group relative flex items-center justify-between bg-white/[0.02] border border-white/5 rounded-lg p-2.5 text-xs cursor-pointer hover:border-purple-500/30 hover:bg-purple-500/[0.02] transition-all"
             >
-              <div className="absolute top-1 right-1 text-yellow-400 z-10">
-                <button onClick={(e) => { e.stopPropagation(); toggleFavorite(file.url); }}>
-                  <Star size={14} />
+              {/* Augmentation du max-w à 75% pour que le titre respire */}
+              <div className="flex items-center gap-2 truncate text-white/70 group-hover:text-white max-w-[75%]">
+                <Volume2 size={14} className="text-purple-400 shrink-0" />
+                <span className="truncate">{file.name.replace(/\.(mp3|wav)$/i, "")}</span>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button 
+                  onClick={(e) => { e.stopPropagation(); playAudio(file.url); }}
+                  className="text-white/30 hover:text-purple-400 p-1 transition-colors"
+                  title="Solo"
+                >
+                  <Headphones size={13} />
+                </button>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); toggleFavorite(file.url); }}
+                  className="text-amber-400 p-1 transition-colors"
+                >
+                  <Star size={13} className="fill-current" />
                 </button>
               </div>
-
-              <div className="absolute bottom-1 right-1 text-purple-400 z-10">
-                <button onClick={(e) => { e.stopPropagation(); playAudio(file.url); }}>
-                  <Headphones size={14} />
-                </button>
-              </div>
-
-              <Volume2 size={28} className="text-purple-500 mb-1 group-hover:scale-110 transition" />
-              <div className="truncate max-w-[90%]">{file.name}</div>
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
     </motion.div>
   );

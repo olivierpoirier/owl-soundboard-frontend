@@ -1,45 +1,22 @@
-import { motion, useAnimation } from "framer-motion";
+import { motion } from "framer-motion";
 import { Star } from "lucide-react";
-import { useEffect } from "react";
 
 export default function StarToggle({ menuOpen, toggleMenu }) {
-  const controls = useAnimation();
-
-  useEffect(() => {
-    if (menuOpen) {
-      controls.start({
-        x: 240,
-        rotate: 360,
-        transition: { duration: 0.8, ease: "easeInOut" },
-      }).then(() =>
-        controls.start({
-          x: 240,
-          rotate: 360,
-          transition: { repeat: Infinity, repeatType: "reverse", duration: 2, ease: "easeInOut" },
-        })
-      );
-    } else {
-      controls.start({
-        x: 0,
-        rotate: -360,
-        transition: { duration: 0.8, ease: "easeInOut" },
-      }).then(() =>
-        controls.start({
-          x: 0,
-          rotate: 0,
-          transition: { repeat: Infinity, repeatType: "reverse", duration: 2, ease: "easeInOut" },
-        })
-      );
-    }
-  }, [controls, menuOpen]);
-
   return (
     <motion.button
       onClick={toggleMenu}
-      animate={controls}
-      className="fixed top-4 left-4 z-50 text-yellow-400 hover:text-yellow-300 cursor-pointer"
+      animate={{ 
+        x: menuOpen ? 335 : 0, // Décalage augmenté à 335px pour suivre le menu de 320px
+        rotate: menuOpen ? 180 : 0
+      }}
+      transition={{ type: "spring", damping: 25, stiffness: 200 }}
+      className={`fixed top-5 left-5 z-[60] p-2 rounded-xl border transition-colors ${
+        menuOpen 
+          ? "text-amber-400 bg-amber-500/10 border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.2)]" 
+          : "text-white/40 bg-white/[0.02] border-white/10 hover:text-amber-400 hover:border-amber-500/30"
+      }`}
     >
-      <Star size={32} />
+      <Star size={18} className={menuOpen ? "fill-current" : ""} />
     </motion.button>
   );
 }

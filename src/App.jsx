@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState, useCallback } from "react";
-import OBR from "@owlbear-rodeo/sdk";
+import React, { useState, useEffect } from "react";
+import { useAudioPlayer } from "./hooks/useAudioPlayer";
 import Notification from "./components/Notification";
 import Header from "./components/Header";
 import AudioControls from "./components/AudioControls";
@@ -7,289 +7,128 @@ import AudioSelector from "./components/AudioSelector";
 import HelpSection from "./components/HelpSection";
 import FavoritesMenu from "./components/FavoritesMenu";
 import StarToggle from "./components/StarToggle";
+import { Upload, Loader2, Info } from "lucide-react";
 
 export default function App() {
-  const audiosRef = useRef([]);
-  const volumeRef = useRef(1);
-  const mutedRef = useRef(false);
-
-  // --- ETATS RESTAURÉS (Manquants dans ton dernier snippet) ---
-  const [currentPath, setCurrentPath] = useState("/owlbear");
-  const [folderFavorites, setFolderFavorites] = useState([]);
-  // -----------------------------------------------------------
-
-  const [audioUrl, setAudioUrl] = useState("");
-  const [audioList, setAudioList] = useState([]); // Initialisé à tableau vide []
-  const [favorites, setFavorites] = useState([]); // Initialisé à tableau vide []
-  const [notification, setNotification] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [dbError, setDbError] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
-  const [volume, setVolume] = useState(1);
-  const [isMuted, setIsMuted] = useState(false);
-  const [activeSoundsCount, setActiveSoundsCount] = useState(0);
-  const [isReady, setIsReady] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-
-  const apiUrl = "https://owl-reaction-backend-server.vercel.app/api/dropbox-files";
-
-  useEffect(() => {
-    try {
-      const savedVolume = localStorage.getItem("owlbear_volume");
-      const savedMute = localStorage.getItem("owlbear_isMuted");
-      const savedFavs = localStorage.getItem("owlbear_favorites");
-      const savedFolderFavs = localStorage.getItem("owlbear_folder_favorites");
-
-      if (savedVolume !== null) setVolume(parseFloat(savedVolume));
-      if (savedMute !== null) setIsMuted(savedMute === "true");
-      if (savedFavs !== null) setFavorites(JSON.parse(savedFavs) || []); // Fallback []
-      if (savedFolderFavs !== null) setFolderFavorites(JSON.parse(savedFolderFavs) || []); // Fallback []
-    } catch (error) {
-      console.error("Erreur récupération localStorage :", error);
-    }
-  }, []);
-
-  useEffect(() => {
-    volumeRef.current = volume;
-  }, [volume]);
-
-  useEffect(() => {
-    mutedRef.current = isMuted;
-  }, [isMuted]);
-
-  useEffect(() => {
-    try {
-      OBR.onReady(() => {
-        setIsReady(true);
-        OBR.broadcast.onMessage("mini-tracks-play", (event) => {
-          const { url, senderName } = event.data;
-          setNotification(`🔊 Son déclenché par ${senderName}`);
-          setTimeout(() => setNotification(null), 2500);
-          playAudio(url);
-        });
-      });
-    } catch (error) {
-      console.error("Erreur OBR Ready :", error);
-    }
-  }, []);
-
-  // --- FONCTION FETCH MISE A JOUR AVEC LOGIQUE DE DOSSIER ---
-  const fetchAudioList = useCallback(async (path) => {
-    setLoading(true);
-    setDbError(false);
-
-    const url = path && path !== "/owlbear" ? `${apiUrl}?path=${encodeURIComponent(path)}` : apiUrl;
-    setCurrentPath(path || "/owlbear");
-
-    try {
-      const res = await fetch(url);
-      const data = await res.json();
-      
-      // Séparation dossiers/fichiers
-      const folders = data?.filter(item => item.isFolder) || [];
-      const files = data?.filter(item => !item.isFolder) || [];
-
-      const fixedFiles = files.map(file => ({
-        name: file.name,
-        url: file.url.replace(/([?&])dl=0(&|$)/, "$1raw=1$2"),
-        isFolder: false,
-        path: file.path,
-      }));
-
-      const combinedList = [...folders, ...fixedFiles];
-
-      setFavorites((prevFavs) =>
-        (prevFavs || []).filter(favUrl =>
-          fixedFiles.some(file => file.url === favUrl)
-        )
-      );
-
-      setAudioList(combinedList);
-      if (fixedFiles.length > 0) setAudioUrl(fixedFiles[0].url);
-    } catch (error) {
-      console.error("❌ Erreur chargement des sons :", error);
-      setDbError(true);
-      setAudioList([]); // Évite que ce soit undefined en cas d'erreur
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchAudioList("/owlbear");
-  }, [fetchAudioList]);
-
-  // --- FONCTIONS DE NAVIGATION (Restaurées) ---
-  const changeFolder = (path) => {
-    fetchAudioList(path);
-  };
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(true);
   
-  const goBack = () => {
-    if (currentPath === "/owlbear") return;
-    const pathParts = currentPath.split("/").filter(p => p.length > 0);
-    pathParts.pop();
-    const newPath = "/" + pathParts.join("/");
-    fetchAudioList(newPath === "/" ? "/owlbear" : newPath);
-  };
-  // --------------------------------------------
+  const apiUrl = "https://owl-soundboard-backend.vercel.app/api/dropbox-files";
+  const player = useAudioPlayer(apiUrl);
 
-  const toggleFavorite = (url) => {
-    try {
-      let newFavorites;
-      // Sécurité sur favorites
-      const currentFavorites = favorites || [];
-      if (currentFavorites.includes(url)) {
-        newFavorites = currentFavorites.filter(fav => fav !== url);
-      } else {
-        newFavorites = [...currentFavorites, url];
-      }
-      setFavorites(newFavorites);
-      localStorage.setItem("owlbear_favorites", JSON.stringify(newFavorites));
-    } catch (error) {
-      console.error("Erreur toggleFavorite :", error);
+  // Détecter si l'application est ouverte dans une iframe (Owlbear Rodeo) ou seule
+  useEffect(() => {
+    if (window.self !== window.top) {
+      setIsStandalone(false); // On est dans Owlbear Rodeo !
+    } else {
+      setIsStandalone(true);  // On est seul sur Vercel ou localhost
     }
-  };
-
-  // --- FONCTION FAVORIS DOSSIER (Restaurée) ---
-  const toggleFolderFavorite = (path) => {
-    try {
-      let newFavorites;
-      const currentFavorites = folderFavorites || [];
-      if (currentFavorites.includes(path)) {
-        newFavorites = currentFavorites.filter(favPath => favPath !== path);
-      } else {
-        newFavorites = [...currentFavorites, path];
-      }
-      setFolderFavorites(newFavorites);
-      localStorage.setItem("owlbear_folder_favorites", JSON.stringify(newFavorites));
-    } catch (error) {
-      console.error("Erreur toggleFolderFavorite :", error);
-    }
-  };
-  // -------------------------------------------
-
-  const playAudio = (url) => {
-    try {
-      const audio = new Audio(url);
-      audio.volume = mutedRef.current ? 0 : volumeRef.current;
-      audio.play().catch((e) => console.warn("🔇 Échec lecture audio:", e));
-
-      audiosRef.current.push(audio);
-      setActiveSoundsCount(audiosRef.current.length);
-
-      audio.addEventListener("ended", () => {
-        audiosRef.current = audiosRef.current.filter((a) => a !== audio);
-        setActiveSoundsCount(audiosRef.current.length);
-      });
-    } catch (error) {
-      console.error("Erreur playAudio :", error);
-    }
-  };
-
-  const playTrack = (url) => {
-    if (!isReady) return;
-    OBR.player.getName().then((playerName) => {
-      const message = { url, senderName: playerName || "Inconnu" };
-      OBR.broadcast.sendMessage("mini-tracks-play", message);
-    });
-    playAudio(url);
-  };
-  
-  const handleVolumeChange = (newVolume) => {
-    try {
-      setVolume(newVolume);
-      localStorage.setItem("owlbear_volume", newVolume.toString());
-      audiosRef.current.forEach((audio) => {
-        audio.volume = mutedRef.current ? 0 : newVolume;
-      });
-    } catch (error) {
-      console.error("Erreur handleVolumeChange :", error);
-    }
-  };
-
-  const toggleMute = () => {
-    try {
-      const newMuted = !isMuted;
-      setIsMuted(newMuted);
-      localStorage.setItem("owlbear_isMuted", newMuted.toString());
-      audiosRef.current.forEach((audio) => {
-        audio.volume = newMuted ? 0 : volumeRef.current;
-      });
-    } catch (error) {
-      console.error("Erreur toggleMute :", error);
-    }
-  };
-
-  const stopAllSounds = () => {
-    try {
-      audiosRef.current.forEach((audio) => audio.pause());
-      audiosRef.current = [];
-      setActiveSoundsCount(0);
-    } catch (error) {
-      console.error("Erreur stopAllSounds :", error);
-    }
-  };
+  }, []);
 
   return (
-    <div className="min-h-screen relative text-white">
-  
-      {/* GLOBAL FIXED ELEMENTS */}
-      <Notification notification={notification} />
+    <div 
+      className={`min-h-screen relative text-white antialiased select-none transition-all duration-700 flex items-center justify-center p-4 ${
+        isStandalone 
+          ? "bg-gradient-to-br from-[#0d0b14] via-[#130f22] to-[#08070d]" 
+          : "bg-transparent"
+      }`}
+    >
+      {/* Éléments globaux */}
+      <Notification notification={player.notification} />
       <StarToggle menuOpen={menuOpen} toggleMenu={() => setMenuOpen(!menuOpen)} />
+      
       <FavoritesMenu
         isOpen={menuOpen}
-        favorites={favorites}
-        folderFavorites={folderFavorites} // Passé correctement
-        audioList={audioList}
-        playTrack={playTrack}
-        playAudio={playAudio}
-        toggleFavorite={toggleFavorite}
-        toggleFolderFavorite={toggleFolderFavorite} // Passé correctement
+        favorites={player.favorites}
+        folderFavorites={player.folderFavorites}
+        audioList={player.audioList}
+        playTrack={player.playTrack}
+        playAudio={player.playAudio}
+        toggleFavorite={player.toggleFavorite}
+        toggleFolderFavorite={player.toggleFolderFavorite}
         toggleMenu={() => setMenuOpen(!menuOpen)}
-        changeFolder={changeFolder} // Passé correctement
+        changeFolder={player.changeFolder}
       />
   
-      {/* MAIN CONTENT */}
-      <div className="flex flex-col items-center justify-center text-center p-6 space-y-6">
+      {/* Panneau Principal en Glassmorphism */}
+      <div className="w-full max-w-md bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-[0_8px_32px_0_rgba(0,0,0,0.5)] flex flex-col items-center space-y-6 transition-all duration-300 hover:border-purple-500/20">
+        
         <Header />
+
+        {/* Message d'info si l'application est ouverte seule sur Vercel */}
+        {isStandalone && (
+          <div className="w-full max-w-[380px] bg-purple-500/10 border border-purple-500/30 rounded-xl p-3 flex gap-2.5 items-start text-left text-xs text-purple-300 shadow-[0_0_15px_rgba(168,85,247,0.05)]">
+            <Info size={16} className="shrink-0 mt-0.5 text-purple-400" />
+            <div>
+              <span className="font-bold block mb-0.5">Mode Extension Détecté</span>
+              Pour profiter pleinement de la synchronisation audio en temps réel avec vos joueurs, intégrez l'URL de ce site directement comme extension dans votre salle **Owlbear Rodeo**.
+            </div>
+          </div>
+        )}
   
-        {loading ? (
-          <div className="flex flex-col items-center animate-pulse space-y-2">
-            <div className="w-56 h-4 bg-white/30 rounded"></div>
-            <p className="text-sm text-white/70">Chargement des sons...</p>
+        {player.loading ? (
+          <div className="flex flex-col items-center animate-pulse space-y-3 py-12">
+            <div className="w-12 h-12 rounded-full border-2 border-t-purple-500 border-r-transparent border-b-transparent border-l-transparent animate-spin"></div>
+            <p className="text-xs text-purple-400 font-semibold tracking-wide uppercase">Chargement des fichiers...</p>
           </div>
         ) : (
-          <div className="w-full max-w-md space-y-6">
-            {dbError && (
-              <p className="text-sm text-red-300 italic">
-                ⚠️ Erreur chargement des sons. Tu peux coller un lien manuellement.
+          <div className="w-full max-w-sm space-y-5 flex flex-col items-center">
+            
+            {player.dbError && (
+              <p className="w-full max-w-[380px] text-center text-xs text-red-300 font-medium bg-red-950/40 px-3 py-2 rounded-xl border border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.1)]">
+                ⚠️ Synchronisation Dropbox interrompue (En attente du déploiement backend).
               </p>
             )}
+
+            {/* Zone de Téléversement Stylisée */}
+            <label className="w-full max-w-[380px] h-11 flex items-center justify-center gap-2 border border-white/10 hover:border-purple-500/40 bg-white/[0.03] hover:bg-purple-500/[0.06] rounded-xl cursor-pointer group transition-all duration-300 hover:shadow-[0_0_20px_rgba(168,85,247,0.15)]">
+              {player.isUploading ? (
+                <>
+                  <Loader2 className="animate-spin text-purple-400" size={16} />
+                  <span className="text-xs font-semibold text-purple-300">Téléversement en cours...</span>
+                </>
+              ) : (
+                <>
+                  <Upload className="text-white/40 group-hover:text-purple-400 group-hover:scale-110 transition-all" size={15} />
+                  <span className="text-xs font-medium text-white/60 group-hover:text-white transition-colors">
+                    Ajouter un fichier audio (.mp3, .wav)
+                  </span>
+                </>
+              )}
+              <input 
+                type="file" 
+                accept="audio/mp3, audio/wav, audio/mpeg" 
+                className="hidden" 
+                onChange={player.handleFileUpload} 
+                disabled={player.isUploading}
+              />
+            </label>
   
+            {/* Sélecteur de fichiers */}
             <AudioSelector
-              audioUrl={audioUrl}
-              setAudioUrl={setAudioUrl}
-              audioList={audioList}
-              playTrack={playTrack}
-              playAudio={playAudio}
-              favorites={favorites}
-              toggleFavorite={toggleFavorite}
-              
-              // Props ajoutées pour la navigation
-              currentPath={currentPath}
-              changeFolder={changeFolder}
-              goBack={goBack}
-              folderFavorites={folderFavorites}
-              toggleFolderFavorite={toggleFolderFavorite}
+              audioUrl={player.audioUrl}
+              setAudioUrl={player.setAudioUrl}
+              audioList={player.audioList}
+              playTrack={player.playTrack}
+              playAudio={player.playAudio}
+              favorites={player.favorites}
+              toggleFavorite={player.toggleFavorite}
+              currentPath={player.currentPath}
+              changeFolder={player.changeFolder}
+              goBack={player.goBack}
+              folderFavorites={player.folderFavorites}
+              toggleFolderFavorite={player.toggleFolderFavorite}
             />
   
+            {/* Contrôles du Volume & Mute */}
             <AudioControls
-              isMuted={isMuted}
-              toggleMute={toggleMute}
-              volume={volume}
-              handleVolumeChange={handleVolumeChange}
-              stopAllSounds={stopAllSounds}
-              audiosCount={activeSoundsCount}
+              isMuted={player.isMuted}
+              toggleMute={player.toggleMute}
+              volume={player.volume}
+              handleVolumeChange={player.handleVolumeChange}
+              stopAllSounds={player.stopAllSounds}
+              audiosCount={player.activeSoundsCount}
             />
   
             <HelpSection helpOpen={helpOpen} setHelpOpen={setHelpOpen} />

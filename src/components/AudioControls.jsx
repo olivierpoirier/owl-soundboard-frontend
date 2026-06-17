@@ -1,4 +1,4 @@
-import { Volume2, VolumeX } from "lucide-react";
+import { Volume2, VolumeX, Square } from "lucide-react";
 
 export default function AudioControls({ isMuted, toggleMute, volume, handleVolumeChange, stopAllSounds, audiosCount }) {
   return (
@@ -6,14 +6,18 @@ export default function AudioControls({ isMuted, toggleMute, volume, handleVolum
       <div className="flex items-center justify-between gap-4">
         <button
           onClick={toggleMute}
-          className={`flex-1 py-2 rounded-lg text-sm font-medium transition border border-white/10 ${isMuted ? "bg-red-700 hover:bg-red-600" : "bg-black/30 hover:bg-black/50"}`}
+          className={`flex-1 h-10 flex items-center justify-center gap-2 rounded-xl text-xs font-semibold transition-all duration-200 border ${
+            isMuted 
+              ? "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20" 
+              : "bg-white/[0.03] border-white/10 text-white/80 hover:bg-white/[0.08] hover:text-white"
+          }`}
         >
-          {isMuted ? <VolumeX className="inline-block mr-1" size={16} /> : <Volume2 className="inline-block mr-1" size={16} />}
+          {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
           {isMuted ? "Muet" : "Son Activé"}
         </button>
 
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-white/60">Vol</span>
+        <div className="flex items-center gap-2 bg-white/[0.02] border border-white/5 px-3 h-10 rounded-xl">
+          <span className="text-[10px] uppercase font-bold tracking-wider text-white/40">Vol</span>
           <input
             type="range"
             min={0}
@@ -21,21 +25,24 @@ export default function AudioControls({ isMuted, toggleMute, volume, handleVolum
             step={0.01}
             value={volume}
             onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-            className="accent-purple-500"
+            className="w-24 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-purple-500"
           />
         </div>
       </div>
 
       <button
         onClick={stopAllSounds}
-        className="w-full py-2 rounded-lg bg-red-700 hover:bg-red-600 transition text-sm font-medium border border-white/10"
+        className="w-full h-11 flex items-center justify-center gap-2 rounded-xl bg-red-950/30 hover:bg-red-900/40 text-red-400 hover:text-red-300 transition-all duration-300 text-xs font-bold border border-red-500/20 hover:border-red-500/40 hover:shadow-[0_0_15px_rgba(239,68,68,0.1)]"
       >
-        ⏹️ Stop Tous les Sons
+        <Square size={14} className="fill-current" />
+        Stop Tous les Sons
       </button>
 
-      <div className="text-xs text-center text-white/50">
-        Sons actifs : {audiosCount}
-      </div>
+      {audiosCount > 0 && (
+        <div className="text-[10px] font-medium text-center text-purple-400/70 tracking-wider uppercase animate-pulse">
+          Sons actifs : {audiosCount}
+        </div>
+      )}
     </div>
   );
 }

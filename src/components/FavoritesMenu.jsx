@@ -1,9 +1,10 @@
 import { motion } from "framer-motion";
 import { Star, Volume2, Headphones, FolderOpen, Repeat2, Clock3, X } from "lucide-react";
+import Button from "./Button";
 
 export default function FavoritesMenu({ 
   isOpen, favorites, folderFavorites, audioList, playTrack, playTrackLoop, playAudio,
-  repeatDelays, formatRepeatDelay, openRepeatDelayEditor,
+  repeatDelays, activeLoops, formatRepeatDelay, openRepeatDelayEditor,
   toggleFavorite, toggleFolderFavorite, toggleMenu, changeFolder
 }) {
   const favoriteFiles = favorites?.map((url) => audioList?.find((f) => f.url === url)).filter(Boolean) || [];
@@ -45,12 +46,13 @@ export default function FavoritesMenu({
                   <FolderOpen size={14} className="text-amber-400 shrink-0" />
                   <span className="truncate">{folderName}</span>
                 </div>
-                <button 
+                <Button
+                  icon={Star}
+                  size="icon"
+                  variant="ghost"
                   onClick={(e) => { e.stopPropagation(); toggleFolderFavorite(favPath); }}
-                  className="text-amber-400 opacity-60 hover:opacity-100 p-1"
-                >
-                  <Star size={12} className="fill-current" />
-                </button>
+                  className="h-7 w-7 text-amber-400 opacity-60 hover:opacity-100"
+                />
               </div>
             );
           })}
@@ -67,45 +69,64 @@ export default function FavoritesMenu({
           {favoriteFiles.map((file) => {
             const trackKey = file.path || file.url;
             const repeatDelay = Number(repeatDelays?.[trackKey]) || 0;
+            const repeatActive = Boolean(activeLoops?.[trackKey]);
+            const displayName = file.name.replace(/\.(mp3|wav)$/i, "");
 
             return (
               <div
                 key={file.name}
-                onClick={() => playTrack(file.url)}
-                className="group relative flex items-center justify-between bg-white/[0.02] border border-white/5 rounded-lg p-2.5 text-xs cursor-pointer hover:border-purple-500/30 hover:bg-purple-500/[0.02] transition-all"
+                className={`group relative flex items-center justify-between bg-white/[0.02] border rounded-lg p-2.5 text-xs transition-all ${
+                  repeatActive
+                    ? "border-emerald-400/30 bg-emerald-400/[0.04]"
+                    : "border-white/5 hover:border-purple-500/30 hover:bg-purple-500/[0.02]"
+                }`}
               >
                 <div className="flex items-center gap-2 truncate text-white/70 group-hover:text-white max-w-[58%]">
                   <Volume2 size={14} className="text-purple-400 shrink-0" />
-                  <span className="truncate">{file.name.replace(/\.(mp3|wav)$/i, "")}</span>
+                  <span className="truncate">{displayName}</span>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  <button
+                  <Button
+                    icon={Volume2}
+                    size="icon"
+                    variant="ghost"
+                    onClick={(e) => { e.stopPropagation(); playTrack(file.url, displayName); }}
+                    className="h-7 w-7 text-white/30 hover:text-purple-300"
+                    title="Jouer pour tous"
+                  />
+                  <Button
+                    icon={Clock3}
+                    size="icon"
+                    variant="toggle"
+                    active={repeatDelay > 0}
                     onClick={(e) => { e.stopPropagation(); openRepeatDelayEditor(file); toggleMenu(); }}
-                    className={`p-1 transition-colors ${repeatDelay > 0 ? "text-emerald-200" : "text-white/30 hover:text-emerald-300"}`}
+                    className={`h-7 w-7 ${repeatDelay > 0 ? "text-emerald-200" : "text-white/30 hover:text-emerald-300"}`}
                     title="Régler le délai"
-                  >
-                    <Clock3 size={13} />
-                  </button>
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); playTrackLoop(file.url, trackKey); }}
-                    className="text-white/30 hover:text-emerald-300 p-1 transition-colors"
-                    title={repeatDelay > 0 ? `Répéter après ${formatRepeatDelay(repeatDelay)}` : "Boucle pour tous"}
-                  >
-                    <Repeat2 size={13} />
-                  </button>
-                  <button 
+                  />
+                  <Button
+                    icon={Repeat2}
+                    size="icon"
+                    variant="toggle"
+                    active={repeatActive}
+                    onClick={(e) => { e.stopPropagation(); playTrackLoop(file.url, trackKey, displayName); }}
+                    className={`h-7 w-7 ${repeatActive ? "text-emerald-300" : "text-white/30 hover:text-emerald-300"}`}
+                    title={repeatActive ? "Arrêter cette boucle" : repeatDelay > 0 ? `Répéter après ${formatRepeatDelay(repeatDelay)}` : "Boucle pour tous"}
+                  />
+                  <Button
+                    icon={Headphones}
+                    size="icon"
+                    variant="ghost"
                     onClick={(e) => { e.stopPropagation(); playAudio(file.url); }}
-                    className="text-white/30 hover:text-purple-400 p-1 transition-colors"
+                    className="h-7 w-7 text-white/30 hover:text-purple-400"
                     title="Solo"
-                  >
-                    <Headphones size={13} />
-                  </button>
-                  <button 
+                  />
+                  <Button
+                    icon={Star}
+                    size="icon"
+                    variant="ghost"
                     onClick={(e) => { e.stopPropagation(); toggleFavorite(file.url); }}
-                    className="text-amber-400 p-1 transition-colors"
-                  >
-                    <Star size={13} className="fill-current" />
-                  </button>
+                    className="h-7 w-7 text-amber-400"
+                  />
                 </div>
               </div>
             );

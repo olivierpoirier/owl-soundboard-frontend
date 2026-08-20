@@ -11,11 +11,12 @@ import {
   FolderOpen,
   ArrowLeft 
 } from "lucide-react";
+import Button from "./Button";
 
 export default function AudioSelector({ 
   audioList, playTrack, playTrackLoop, playAudio, favorites, toggleFavorite, 
   currentPath, changeFolder, goBack, folderFavorites, toggleFolderFavorite,
-  repeatDelays, formatRepeatDelay, openRepeatDelayEditor
+  repeatDelays, activeLoops, formatRepeatDelay, openRepeatDelayEditor
 }) {
   const itemsPerPage = 6;
   const [page, setPage] = useState(0);
@@ -88,28 +89,42 @@ export default function AudioSelector({
           const isFav = isFolderFav || isTrackFav;
           const trackKey = file.path || file.url;
           const repeatDelay = !file.isFolder ? Number(repeatDelays?.[trackKey]) || 0 : 0;
+          const repeatActive = !file.isFolder && Boolean(activeLoops?.[trackKey]);
+          const displayName = file.name.replace(/\.(mp3|wav)$/i, "");
 
           return (
             <div
               key={file.path || file.url}
-              onClick={() => file.isFolder ? changeFolder(file.path) : playTrack(file.url)}
-              className="relative aspect-[4/3] bg-white/[0.02] border border-white/10 rounded-xl p-4 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-300 group hover:bg-purple-500/[0.04] hover:border-purple-500/40 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)] hover:-translate-y-0.5"
+              onClick={() => file.isFolder && changeFolder(file.path)}
+              className={`relative aspect-[4/3] bg-white/[0.02] border rounded-xl p-4 flex flex-col items-center justify-center text-center transition-all duration-300 group hover:-translate-y-0.5 ${
+                file.isFolder
+                  ? "cursor-pointer border-white/10 hover:bg-purple-500/[0.04] hover:border-purple-500/40 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)]"
+                  : repeatActive
+                    ? "cursor-default border-emerald-400/40 bg-emerald-400/[0.04] shadow-[0_0_18px_rgba(52,211,153,0.08)]"
+                    : "cursor-default border-white/10 hover:border-white/20"
+              }`}
             >
               {/* Étoile Favori */}
-              <button 
+              <Button
+                icon={Star}
+                size="icon"
+                variant="ghost"
+                active={isFav}
                 onClick={(e) => { 
                   e.stopPropagation(); 
                   file.isFolder ? toggleFolderFavorite(file.path) : toggleFavorite(file.url); 
                 }}
-                className={`absolute top-2 right-2 transition-all duration-200 ${
+                className={`absolute top-2 right-2 h-7 w-7 ${
                   isFav ? "text-amber-400 opacity-100" : "text-white/20 opacity-0 group-hover:opacity-100 hover:text-white/60"
                 }`}
-              >
-                <Star size={14} className={isFav ? "fill-current" : ""} />
-              </button>
+              />
 
               {!file.isFolder && (
-                <button
+                <Button
+                  icon={Clock3}
+                  size="icon"
+                  variant="toggle"
+                  active={repeatDelay > 0}
                   onClick={(e) => { e.stopPropagation(); openRepeatDelayEditor(file); }}
                   className={`absolute top-2 left-2 flex items-center gap-1 rounded-md px-1.5 py-1 transition-all duration-200 ${
                     repeatDelay > 0
@@ -118,30 +133,44 @@ export default function AudioSelector({
                   }`}
                   title="Régler le délai de répétition"
                 >
-                  <Clock3 size={13} />
                   {repeatDelay > 0 && (
                     <span className="text-[9px] font-bold leading-none">{formatRepeatDelay(repeatDelay)}</span>
                   )}
-                </button>
+                </Button>
               )}
 
               {/* Mode Solo (uniquement pour les fichiers) */}
               {!file.isFolder && (
                 <>
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); playTrackLoop(file.url, trackKey); }}
-                    className="absolute bottom-2 left-2 text-white/20 opacity-0 group-hover:opacity-100 hover:text-emerald-300 transition-all duration-200"
-                    title={repeatDelay > 0 ? `Répéter pour tous après ${formatRepeatDelay(repeatDelay)}` : "Jouer en boucle pour tout le monde"}
-                  >
-                    <Repeat2 size={14} />
-                  </button>
-                  <button 
+                  <Button
+                    icon={Volume2}
+                    variant="primary"
+                    size="sm"
+                    onClick={(e) => { e.stopPropagation(); playTrack(file.url, displayName); }}
+                    className="absolute inset-x-10 top-1/2 -translate-y-1/2 h-12 rounded-xl flex items-center justify-center gap-2 bg-purple-500/10 border border-purple-400/20 text-purple-200 hover:bg-purple-500/20 hover:border-purple-300/40 transition-all duration-200"
+                    title="Jouer pour tout le monde"
+                  />
+                  <Button
+                    icon={Repeat2}
+                    size="icon"
+                    variant="toggle"
+                    active={repeatActive}
+                    onClick={(e) => { e.stopPropagation(); playTrackLoop(file.url, trackKey, displayName); }}
+                    className={`absolute bottom-2 left-2 h-8 w-8 ${
+                      repeatActive
+                        ? "text-emerald-300 opacity-100"
+                        : "text-white/20 opacity-0 group-hover:opacity-100 hover:text-emerald-300"
+                    }`}
+                    title={repeatActive ? "Arrêter cette boucle" : repeatDelay > 0 ? `Répéter pour tous après ${formatRepeatDelay(repeatDelay)}` : "Jouer en boucle pour tout le monde"}
+                  />
+                  <Button
+                    icon={Headphones}
+                    size="icon"
+                    variant="ghost"
                     onClick={(e) => { e.stopPropagation(); playAudio(file.url); }}
-                    className="absolute bottom-2 right-2 text-white/20 opacity-0 group-hover:opacity-100 hover:text-purple-400 transition-all duration-200"
+                    className="absolute bottom-2 right-2 h-8 w-8 text-white/20 opacity-0 group-hover:opacity-100 hover:text-purple-400 transition-all duration-200"
                     title="Écouter en solo"
-                  >
-                    <Headphones size={14} />
-                  </button>
+                  />
                 </>
               )}
 
@@ -149,11 +178,11 @@ export default function AudioSelector({
               {file.isFolder ? (
                 <FolderOpen size={28} className="text-amber-400/80 mb-2 group-hover:scale-110 transition-transform duration-300 group-hover:text-amber-400" />
               ) : (
-                <Volume2 size={28} className="text-purple-400/80 mb-2 group-hover:scale-110 transition-transform duration-300 group-hover:text-purple-400" />
+                <div className="h-9 mb-8" />
               )}
               
               <div className="text-xs font-medium text-white/70 group-hover:text-white truncate w-full max-w-[120px] transition-colors">
-                {file.name.replace(/\.(mp3|wav)$/i, "")}
+                {displayName}
               </div>
             </div>
           );

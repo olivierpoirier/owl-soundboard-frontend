@@ -31,6 +31,9 @@ export function useAudioPlayer(apiUrl) {
   const mutedRef = useRef(false);
   const notificationTimeoutRef = useRef(null);
   const obrUnsubscribesRef = useRef([]);
+  const audioUnlockedRef = useRef(false);
+  const persistentLoopsRef = useRef({});
+  const resumePersistentLoopsRef = useRef(() => {});
   const mountedRef = useRef(true);
 
   const [currentPath, setCurrentPath] = useState(ROOT_PATH);
@@ -44,6 +47,13 @@ export function useAudioPlayer(apiUrl) {
   const [activeSoundsCount, setActiveSoundsCount] = useState(0);
   const [isReady, setIsReady] = useState(false);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [activeLoops, setActiveLoops] = useState({});
+  const [eventLog, setEventLog] = useState(() => [{
+    id: "boot",
+    time: new Date().toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+    type: "system",
+    message: "Terminal audio prêt.",
+  }]);
 
   const [volume, setVolume] = useState(() => {
     const saved = localStorage.getItem("owlbear_volume");
@@ -89,12 +99,26 @@ export function useAudioPlayer(apiUrl) {
     mutedRef.current = isMuted;
   }, [isMuted]);
 
+  useEffect(() => {
+    audioUnlockedRef.current = audioUnlocked;
+  }, [audioUnlocked]);
+
   const showNotification = useCallback((msg) => {
     if (notificationTimeoutRef.current) {
       clearTimeout(notificationTimeoutRef.current);
     }
     setNotification(msg);
     notificationTimeoutRef.current = setTimeout(() => setNotification(null), 2500);
+  }, []);
+
+  const addLog = useCallback((type, message) => {
+    const entry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      time: new Date().toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      type,
+      message,
+    };
+    setEventLog((current) => [entry, ...current].slice(0, 60));
   }, []);
 
   const unlockAudio = useCallback(async () => {
@@ -118,14 +142,18 @@ export function useAudioPlayer(apiUrl) {
       await silentAudio.play();
       silentAudio.pause();
       silentAudio.src = "";
+      audioUnlockedRef.current = true;
       setAudioUnlocked(true);
+      addLog("system", "Audio activé sur cet appareil.");
+      showNotification("✅ Audio activé");
+      resumePersistentLoopsRef.current();
       return true;
     } catch (error) {
       console.warn("Déverrouillage audio refusé par le navigateur :", error);
       setAudioUnlocked(false);
       return false;
     }
-  }, []);
+  }, [addLog, showNotification]);
 
   const formatRepeatDelay = useCallback((seconds) => {
     const totalSeconds = clampDelay(seconds);
@@ -214,6 +242,7 @@ export function useAudioPlayer(apiUrl) {
         .catch((error) => {
           console.warn("Lecture audio bloquée par le navigateur :", error);
           setAudioUnlocked(false);
+          addLog("warn", "Lecture bloquée par le navigateur. Activation audio requise.");
           showNotification("⚠️ Audio bloqué: cliquez sur Activer l'audio");
         });
 
@@ -279,10 +308,26 @@ export function useAudioPlayer(apiUrl) {
       if (!current || current.signature !== signature || current.probe !== probe) return;
       playFrom(0);
     });
-  }, [registerLoopPlayer, showNotification, stopLoopInstance]);
+  }, [addLog, registerLoopPlayer, showNotification, stopLoopInstance]);
 
   const syncPersistentLoops = useCallback((loops, { alignToStartedAt = true } = {}) => {
-    const loopEntries = Object.values(loops || {}).filter((loop) => loop?.id && loop?.url);
+    const previousLoops = persistentLoopsRef.current || {};
+    const nextLoops = loops || {};
+    persistentLoopsRef.current = nextLoops;
+    setActiveLoops(nextLoops);
+
+    Object.values(nextLoops).forEach((loop) => {
+      if (!previousLoops[loop.id]) {
+        addLog("loop", `${loop.senderName || "MJ"} a activé la boucle: ${loop.name || "son"} (${formatRepeatDelay(loop.repeatDelaySeconds)}).`);
+      }
+    });
+    Object.values(previousLoops).forEach((loop) => {
+      if (!nextLoops[loop.id]) {
+        addLog("stop", `Boucle arrêtée: ${loop.name || "son"}.`);
+      }
+    });
+
+    const loopEntries = Object.values(nextLoops).filter((loop) => loop?.id && loop?.url);
     const activeIds = new Set(loopEntries.map((loop) => loop.id));
 
     loopPlayersRef.current.forEach((_, loopId) => {
@@ -291,8 +336,16 @@ export function useAudioPlayer(apiUrl) {
       }
     });
 
+    if (!audioUnlockedRef.current) return;
+
     loopEntries.forEach((loop) => startLoopInstance(loop, { alignToStartedAt }));
-  }, [startLoopInstance, stopLoopInstance]);
+  }, [addLog, formatRepeatDelay, startLoopInstance, stopLoopInstance]);
+
+  useEffect(() => {
+    resumePersistentLoopsRef.current = () => {
+      syncPersistentLoops(persistentLoopsRef.current, { alignToStartedAt: true });
+    };
+  }, [syncPersistentLoops]);
 
   const persistLoop = useCallback(async (loop) => {
     const metadata = await OBR.room.getMetadata();
@@ -371,6 +424,11 @@ export function useAudioPlayer(apiUrl) {
   }, [unlockAudio]);
 
   useEffect(() => {
+    if (!audioUnlocked) return;
+    syncPersistentLoops(persistentLoopsRef.current, { alignToStartedAt: true });
+  }, [audioUnlocked, syncPersistentLoops]);
+
+  useEffect(() => {
     try {
       OBR.onReady(async () => {
         if (!mountedRef.current) return;
@@ -379,12 +437,14 @@ export function useAudioPlayer(apiUrl) {
         const unsubscribePlay = OBR.broadcast.onMessage("mini-tracks-play", (event) => {
           const { url, senderName } = event.data || {};
           if (!url) return;
+          addLog("play", `${senderName || "MJ"} a joué: ${event.data?.name || "son"}.`);
           showNotification(`🔊 Son déclenché par ${senderName || "MJ"}`);
           playAudio(url);
         });
 
         const unsubscribeStop = OBR.broadcast.onMessage("mini-tracks-stop", (event) => {
           const { senderName } = event.data || {};
+          addLog("stop", `${senderName || "MJ"} a arrêté tous les sons.`);
           showNotification(`⏹️ Sons arrêtés par ${senderName || "MJ"}`);
           clearLocalSounds();
         });
@@ -403,7 +463,7 @@ export function useAudioPlayer(apiUrl) {
     } catch (e) {
       console.warn("OBR non détecté (hors d'Owlbear Rodeo)", e);
     }
-  }, [clearLocalSounds, playAudio, showNotification, syncPersistentLoops]);
+  }, [addLog, clearLocalSounds, playAudio, showNotification, syncPersistentLoops]);
 
   const fetchAudioList = useCallback(async (path) => {
     setLoading(true);
@@ -441,8 +501,9 @@ export function useAudioPlayer(apiUrl) {
     fetchAudioList(ROOT_PATH);
   }, [fetchAudioList]);
 
-  const playTrack = useCallback((url) => {
+  const playTrack = useCallback((url, name = "son") => {
     if (!isReady) {
+      addLog("play", `Lecture locale: ${name}.`);
       playAudio(url);
       return;
     }
@@ -450,26 +511,69 @@ export function useAudioPlayer(apiUrl) {
     OBR.player.getName().then((playerName) => {
       OBR.broadcast.sendMessage(
         "mini-tracks-play",
-        { url, senderName: playerName || "MJ" },
+        { url, name, senderName: playerName || "MJ" },
         { destination: "REMOTE" }
       );
+      addLog("play", `${playerName || "MJ"} a joué: ${name}.`);
     });
     playAudio(url);
-  }, [isReady, playAudio]);
+  }, [addLog, isReady, playAudio]);
 
-  const playTrackLoop = useCallback((url, trackKey) => {
+  const removePersistentLoop = useCallback(async (loopId) => {
+    const metadata = await OBR.room.getMetadata();
+    const loops = { ...getLoopsFromMetadata(metadata) };
+    delete loops[loopId];
+    await OBR.room.setMetadata({
+      [ROOM_LOOPS_KEY]: {
+        version: 1,
+        loops,
+      },
+    });
+  }, []);
+
+  const stopTrackLoop = useCallback((trackKey, name = "son") => {
+    const loopId = trackKey;
+    if (!loopId) return;
+    stopLoopInstance(loopId);
+
+    if (!isReady) {
+      const nextLoops = { ...(persistentLoopsRef.current || {}) };
+      delete nextLoops[loopId];
+      syncPersistentLoops(nextLoops, { alignToStartedAt: false });
+      return;
+    }
+
+    OBR.player.getName().then(async (playerName) => {
+      addLog("stop", `${playerName || "MJ"} a arrêté la boucle: ${name}.`);
+      try {
+        await removePersistentLoop(loopId);
+      } catch (error) {
+        console.warn("Impossible d'arrêter la boucle active :", error);
+        showNotification("⚠️ Boucle arrêtée localement, mais non sauvegardée");
+      }
+    });
+  }, [addLog, isReady, removePersistentLoop, showNotification, stopLoopInstance, syncPersistentLoops]);
+
+  const playTrackLoop = useCallback((url, trackKey, name = "son") => {
     const loopId = trackKey || url;
+    if (persistentLoopsRef.current?.[loopId]) {
+      stopTrackLoop(loopId, name);
+      return;
+    }
+
     const delay = clampDelay(repeatDelays?.[loopId]);
     const loop = {
       id: loopId,
       url,
       trackKey: loopId,
+      name,
       repeatDelaySeconds: delay,
       startedAt: Date.now(),
     };
 
     if (!isReady) {
       startLoopInstance(loop);
+      addLog("loop", `Boucle locale activée: ${name} (${formatRepeatDelay(delay)}).`);
       showNotification(delay > 0 ? `🔁 Répétition locale après ${formatRepeatDelay(delay)}` : "🔁 Boucle locale démarrée");
       return;
     }
@@ -477,6 +581,7 @@ export function useAudioPlayer(apiUrl) {
     OBR.player.getName().then(async (playerName) => {
       const loopWithSender = { ...loop, senderName: playerName || "MJ" };
       startLoopInstance(loopWithSender);
+      addLog("loop", `${playerName || "MJ"} a activé la boucle: ${name} (${formatRepeatDelay(delay)}).`);
       showNotification(delay > 0 ? `🔁 Répétition après ${formatRepeatDelay(delay)}` : "🔁 Boucle démarrée");
       try {
         await persistLoop(loopWithSender);
@@ -485,7 +590,7 @@ export function useAudioPlayer(apiUrl) {
         showNotification("⚠️ Boucle lancée localement, mais non sauvegardée");
       }
     });
-  }, [formatRepeatDelay, isReady, persistLoop, repeatDelays, showNotification, startLoopInstance]);
+  }, [addLog, formatRepeatDelay, isReady, persistLoop, repeatDelays, showNotification, startLoopInstance, stopTrackLoop]);
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
@@ -603,6 +708,7 @@ export function useAudioPlayer(apiUrl) {
 
     setRepeatDelays(updated);
     localStorage.setItem("owlbear_repeat_delays", JSON.stringify(updated));
+    addLog("system", sanitizedDelay > 0 ? `Délai de répétition sauvegardé: ${formatRepeatDelay(sanitizedDelay)}.` : "Délai de répétition remis à immédiat.");
     showNotification(sanitizedDelay > 0 ? `✅ Répétition : ${formatRepeatDelay(sanitizedDelay)}` : "✅ Répétition immédiate");
   };
 
@@ -634,6 +740,7 @@ export function useAudioPlayer(apiUrl) {
 
     if (broadcast && isReady) {
       OBR.player.getName().then(async (playerName) => {
+        addLog("stop", `${playerName || "MJ"} a arrêté tous les sons.`);
         OBR.broadcast.sendMessage(
           "mini-tracks-stop",
           { senderName: playerName || "MJ" },
@@ -657,6 +764,8 @@ export function useAudioPlayer(apiUrl) {
     audioList,
     favorites,
     repeatDelays,
+    activeLoops,
+    eventLog,
     notification,
     audioUnlocked,
     loading,
@@ -672,6 +781,7 @@ export function useAudioPlayer(apiUrl) {
     toggleFolderFavorite,
     playTrack,
     playTrackLoop,
+    stopTrackLoop,
     playAudio,
     handleFileUpload,
     handleCreateFolder,

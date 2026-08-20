@@ -10,6 +10,72 @@ body {
   background: transparent;
   color: #f3f4f6;
   font-family: 'Inter', sans-serif;
+  --c1: #a855f7;
+  --c2: #34d399;
+  --terminal-green: #7cffb2;
+}
+
+.theme-active-button {
+  border-color: color-mix(in oklab, var(--c1) 70%, white 10%);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.02)),
+    color-mix(in oklab, var(--c1) 72%, black 18%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.28),
+    0 0 18px color-mix(in oklab, var(--c1) 32%, transparent);
+}
+
+.themed-secondary-button {
+  color: rgba(255,255,255,0.76);
+  border-color: rgba(255,255,255,0.12);
+  background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.025));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+}
+
+.themed-secondary-button:hover {
+  color: white;
+  border-color: color-mix(in oklab, var(--c1) 48%, transparent);
+  background: linear-gradient(180deg, rgba(168,85,247,0.16), rgba(255,255,255,0.035));
+}
+
+.themed-danger-button {
+  color: rgb(252 165 165);
+  border-color: rgba(248,113,113,0.32);
+  background: linear-gradient(180deg, rgba(239,68,68,0.16), rgba(69,10,10,0.32));
+}
+
+.themed-ghost-button {
+  color: rgba(255,255,255,0.46);
+  border-color: transparent;
+  background: transparent;
+}
+
+.themed-ghost-button:hover {
+  color: white;
+  border-color: rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.05);
+}
+
+.themed-toggle-button {
+  color: rgba(255,255,255,0.45);
+  border-color: rgba(255,255,255,0.10);
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015));
+}
+
+.themed-toggle-button:hover {
+  color: rgb(167 243 208);
+  border-color: rgba(52,211,153,0.30);
+}
+
+.themed-toggle-button-active {
+  color: rgb(167 243 208);
+  border-color: rgba(52,211,153,0.56);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0.02)),
+    rgba(16,185,129,0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.18),
+    0 0 16px rgba(52,211,153,0.22);
 }
 
 /* Scrollbar Intégrée (Invisible/Fine en mode transparent) */

@@ -7,6 +7,8 @@ import AudioSelector from "./components/AudioSelector";
 import HelpSection from "./components/HelpSection";
 import FavoritesMenu from "./components/FavoritesMenu";
 import StarToggle from "./components/StarToggle";
+import TerminalLog from "./components/TerminalLog";
+import Button from "./components/Button";
 import { Upload, Loader2, Info, FolderPlus, Check, X, Clock3, RotateCcw, Volume2 } from "lucide-react";
 
 export default function App() {
@@ -84,6 +86,7 @@ export default function App() {
         playTrackLoop={player.playTrackLoop}
         playAudio={player.playAudio}
         repeatDelays={player.repeatDelays}
+        activeLoops={player.activeLoops}
         formatRepeatDelay={player.formatRepeatDelay}
         openRepeatDelayEditor={openRepeatDelayEditor}
         toggleFavorite={player.toggleFavorite}
@@ -109,14 +112,15 @@ export default function App() {
         )}
 
         {!player.audioUnlocked && (
-          <button
-            type="button"
+          <Button
+            icon={Volume2}
+            variant="toggle"
+            size="sm"
             onClick={player.unlockAudio}
-            className="w-full max-w-[380px] h-10 flex items-center justify-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20 hover:border-emerald-300/50 transition-all duration-200 text-xs font-bold"
+            className="w-full max-w-[380px] text-emerald-200"
           >
-            <Volume2 size={15} />
             Activer l'audio sur cet appareil
-          </button>
+          </Button>
         )}
   
         {player.loading ? (
@@ -171,35 +175,37 @@ export default function App() {
                   className="min-w-0 flex-1 h-10 rounded-xl bg-white/[0.03] border border-white/10 px-3 text-xs text-white/80 placeholder:text-white/25 outline-none focus:border-amber-400/50 focus:bg-amber-400/[0.04]"
                   autoFocus
                 />
-                <button
+                <Button
+                  icon={Check}
                   type="submit"
                   disabled={player.isCreatingFolder}
-                  className="w-10 h-10 rounded-xl border border-amber-400/25 bg-amber-400/10 text-amber-300 hover:bg-amber-400/20 transition-colors flex items-center justify-center disabled:opacity-50"
+                  loading={player.isCreatingFolder}
+                  variant="toggle"
+                  size="icon"
+                  className="text-amber-300"
                   title="Créer le dossier"
-                >
-                  {player.isCreatingFolder ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-                </button>
-                <button
+                />
+                <Button
+                  icon={X}
                   type="button"
                   onClick={() => { setFolderFormOpen(false); setFolderName(""); }}
                   disabled={player.isCreatingFolder}
-                  className="w-10 h-10 rounded-xl border border-white/10 bg-white/[0.03] text-white/40 hover:text-white hover:bg-white/[0.08] transition-colors flex items-center justify-center disabled:opacity-50"
+                  variant="ghost"
+                  size="icon"
+                  className="text-white/40 hover:text-white"
                   title="Annuler"
-                >
-                  <X size={15} />
-                </button>
+                />
               </form>
             ) : (
-              <button
-                type="button"
+              <Button
+                icon={FolderPlus}
+                variant="secondary"
+                size="sm"
                 onClick={() => setFolderFormOpen(true)}
-                className="w-full max-w-[380px] h-10 flex items-center justify-center gap-2 border border-white/10 hover:border-amber-400/40 bg-white/[0.03] hover:bg-amber-400/[0.06] rounded-xl group transition-all duration-300"
+                className="w-full max-w-[380px] hover:text-amber-200"
               >
-                <FolderPlus className="text-white/40 group-hover:text-amber-300 group-hover:scale-110 transition-all" size={15} />
-                <span className="text-xs font-medium text-white/60 group-hover:text-white transition-colors">
-                  Ajouter un dossier
-                </span>
-              </button>
+                Ajouter un dossier
+              </Button>
             )}
 
             {repeatEditorTrack && (
@@ -214,14 +220,15 @@ export default function App() {
                       {repeatEditorTrack.name?.replace(/\.(mp3|wav)$/i, "") || "Répétition"}
                     </span>
                   </div>
-                  <button
+                  <Button
+                    icon={X}
                     type="button"
                     onClick={() => setRepeatEditorTrack(null)}
-                    className="text-white/35 hover:text-white transition-colors"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-white/35 hover:text-white"
                     title="Fermer"
-                  >
-                    <X size={15} />
-                  </button>
+                  />
                 </div>
 
                 <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-end">
@@ -247,21 +254,23 @@ export default function App() {
                       className="h-9 rounded-lg bg-black/20 border border-white/10 px-2 text-xs text-white/80 outline-none focus:border-emerald-300/50"
                     />
                   </label>
-                  <button
+                  <Button
+                    icon={Check}
                     type="submit"
-                    className="w-9 h-9 rounded-lg border border-emerald-300/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20 transition-colors flex items-center justify-center"
+                    variant="toggle"
+                    size="icon"
+                    className="h-9 w-9 text-emerald-200"
                     title="Sauvegarder"
-                  >
-                    <Check size={14} />
-                  </button>
-                  <button
+                  />
+                  <Button
+                    icon={RotateCcw}
                     type="button"
                     onClick={handleRepeatDelayReset}
-                    className="w-9 h-9 rounded-lg border border-white/10 bg-white/[0.03] text-white/40 hover:text-white hover:bg-white/[0.08] transition-colors flex items-center justify-center"
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 text-white/40 hover:text-white"
                     title="Remettre à immédiat"
-                  >
-                    <RotateCcw size={14} />
-                  </button>
+                  />
                 </div>
               </form>
             )}
@@ -275,6 +284,7 @@ export default function App() {
               playTrackLoop={player.playTrackLoop}
               playAudio={player.playAudio}
               repeatDelays={player.repeatDelays}
+              activeLoops={player.activeLoops}
               formatRepeatDelay={player.formatRepeatDelay}
               openRepeatDelayEditor={openRepeatDelayEditor}
               favorites={player.favorites}
@@ -295,6 +305,8 @@ export default function App() {
               stopAllSounds={player.stopAllSounds}
               audiosCount={player.activeSoundsCount}
             />
+
+            <TerminalLog entries={player.eventLog} />
   
             <HelpSection helpOpen={helpOpen} setHelpOpen={setHelpOpen} />
           </div>

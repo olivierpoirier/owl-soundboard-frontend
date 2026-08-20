@@ -1,12 +1,12 @@
 import { motion } from "framer-motion";
 import { Star } from "lucide-react";
 
-export default function StarToggle({ menuOpen, toggleMenu }) {
+export default function StarToggle({ menuOpen, panelOpen = menuOpen, toggleMenu }) {
   return (
     <motion.button
       onClick={toggleMenu}
       animate={{ 
-        x: menuOpen ? 335 : 0, // Décalage augmenté à 335px pour suivre le menu de 320px
+        x: panelOpen ? 335 : 0,
         rotate: menuOpen ? 180 : 0
       }}
       transition={{ type: "spring", damping: 25, stiffness: 200 }}

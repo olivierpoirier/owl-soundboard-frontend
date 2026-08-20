@@ -5,8 +5,7 @@ import {
   Volume2, 
   Star, 
   Headphones, 
-  Repeat2,
-  Clock3,
+  Music,
   Folder, 
   FolderOpen,
   ArrowLeft 
@@ -14,9 +13,9 @@ import {
 import Button from "./Button";
 
 export default function AudioSelector({ 
-  audioList, playTrack, playTrackLoop, playAudio, favorites, toggleFavorite, 
+  audioList, playTrack, playAudio, favorites, toggleFavorite, 
   currentPath, changeFolder, goBack, folderFavorites, toggleFolderFavorite,
-  repeatDelays, activeLoops, formatRepeatDelay, openRepeatDelayEditor
+  repeatDelays, activeLoops, formatRepeatDelay
 }) {
   const itemsPerPage = 6;
   const [page, setPage] = useState(0);
@@ -95,14 +94,15 @@ export default function AudioSelector({
           return (
             <div
               key={file.path || file.url}
-              onClick={() => file.isFolder && changeFolder(file.path)}
+              onClick={() => file.isFolder ? changeFolder(file.path) : playTrack(file.url, displayName)}
               className={`relative h-[138px] min-h-0 bg-white/[0.02] border rounded-xl p-4 flex flex-col items-center justify-center text-center transition-all duration-300 group hover:-translate-y-0.5 ${
                 file.isFolder
                   ? "cursor-pointer border-white/10 hover:bg-purple-500/[0.04] hover:border-purple-500/40 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)]"
                   : repeatActive
-                    ? "cursor-default overflow-hidden border-emerald-400/40 bg-emerald-400/[0.04] shadow-[0_0_18px_rgba(52,211,153,0.08)]"
-                    : "cursor-default overflow-hidden border-white/10 hover:border-white/20"
+                    ? "cursor-pointer overflow-hidden border-emerald-400/40 bg-emerald-400/[0.04] shadow-[0_0_18px_rgba(52,211,153,0.08)]"
+                    : "cursor-pointer overflow-hidden border-white/10 hover:border-white/20"
               }`}
+              title={file.isFolder ? "Ouvrir le dossier" : "Jouer pour tout le monde"}
             >
               {/* Étoile Favori */}
               <Button
@@ -115,8 +115,9 @@ export default function AudioSelector({
                   file.isFolder ? toggleFolderFavorite(file.path) : toggleFavorite(file.url); 
                 }}
                 className={`absolute top-2 right-2 h-7 w-7 ${
-                  isFav ? "text-amber-400 opacity-100" : "text-white/20 opacity-0 group-hover:opacity-100 hover:text-white/60"
+                  isFav ? "text-amber-400 opacity-100 [&>svg]:fill-current" : "text-white/35 opacity-70 hover:text-amber-300 hover:opacity-100"
                 }`}
+                title={isFav ? "Retirer des favoris" : "Ajouter aux favoris"}
               />
 
               {file.isFolder ? (
@@ -134,39 +135,25 @@ export default function AudioSelector({
                     </span>
                   )}
 
-                  <div className="absolute inset-x-0 top-9 flex justify-center">
-                    <Button
-                      icon={Volume2}
-                      variant="primary"
-                      size="icon"
-                      onClick={(e) => { e.stopPropagation(); playTrack(file.url, displayName); }}
-                      className="h-10 w-10 rounded-full"
-                      title="Jouer pour tout le monde"
-                    />
-                  </div>
+                  <Music
+                    size={30}
+                    className={`mb-2 transition-all duration-300 group-hover:scale-110 ${
+                      repeatActive ? "text-emerald-300" : "text-purple-300/80 group-hover:text-purple-300"
+                    }`}
+                  />
 
-                  <div className="absolute bottom-[48px] left-3 right-3 h-4 truncate text-xs font-semibold leading-4 text-white/75 transition-colors group-hover:text-white">
+                  <div className="w-full max-w-[120px] truncate text-xs font-semibold text-white/75 transition-colors group-hover:text-white">
                     {displayName}
                   </div>
 
-                  <div className="absolute bottom-2 left-1/2 grid w-[112px] -translate-x-1/2 grid-cols-3 items-center gap-2">
+                  <div className="absolute bottom-2 left-1/2 grid w-[72px] -translate-x-1/2 grid-cols-2 items-center gap-2">
                     <Button
-                      icon={Repeat2}
+                      icon={Volume2}
                       size="icon"
-                      variant="toggle"
-                      active={repeatActive}
-                      onClick={(e) => { e.stopPropagation(); playTrackLoop(file.url, trackKey, displayName); }}
-                      className={`h-8 w-8 justify-self-center ${repeatActive ? "text-emerald-300" : "text-white/35 hover:text-emerald-300"}`}
-                      title={repeatActive ? "Arrêter cette boucle" : repeatDelay > 0 ? `Répéter pour tous après ${formatRepeatDelay(repeatDelay)}` : "Jouer en boucle pour tout le monde"}
-                    />
-                    <Button
-                      icon={Clock3}
-                      size="icon"
-                      variant="toggle"
-                      active={repeatDelay > 0}
-                      onClick={(e) => { e.stopPropagation(); openRepeatDelayEditor(file); }}
-                      className={`h-8 w-8 justify-self-center ${repeatDelay > 0 ? "text-emerald-200" : "text-white/35 hover:text-emerald-300"}`}
-                      title="Régler le délai de répétition"
+                      variant="ghost"
+                      onClick={(e) => { e.stopPropagation(); playTrack(file.url, displayName); }}
+                      className="h-8 w-8 justify-self-center text-white/35 hover:text-purple-300"
+                      title="Jouer pour tout le monde"
                     />
                     <Button
                       icon={Headphones}

@@ -7,12 +7,15 @@ import AudioSelector from "./components/AudioSelector";
 import HelpSection from "./components/HelpSection";
 import FavoritesMenu from "./components/FavoritesMenu";
 import StarToggle from "./components/StarToggle";
+import RepeatMenu from "./components/RepeatMenu";
+import RepeatToggle from "./components/RepeatToggle";
 import TerminalLog from "./components/TerminalLog";
 import Button from "./components/Button";
 import { Upload, Loader2, Info, FolderPlus, Check, X, Clock3, RotateCcw, Volume2 } from "lucide-react";
 
 export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [repeatMenuOpen, setRepeatMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [isStandalone, setIsStandalone] = useState(true);
   const [folderFormOpen, setFolderFormOpen] = useState(false);
@@ -65,6 +68,22 @@ export default function App() {
     setRepeatEditorTrack(null);
   };
 
+  const toggleFavoritesMenu = () => {
+    setMenuOpen((current) => {
+      const next = !current;
+      if (next) setRepeatMenuOpen(false);
+      return next;
+    });
+  };
+
+  const toggleRepeatMenu = () => {
+    setRepeatMenuOpen((current) => {
+      const next = !current;
+      if (next) setMenuOpen(false);
+      return next;
+    });
+  };
+
   return (
     <div 
       className={`min-h-screen relative text-white antialiased select-none transition-all duration-700 flex items-center justify-center p-4 ${
@@ -75,7 +94,8 @@ export default function App() {
     >
       {/* Éléments globaux */}
       <Notification notification={player.notification} />
-      <StarToggle menuOpen={menuOpen} toggleMenu={() => setMenuOpen(!menuOpen)} />
+      <StarToggle menuOpen={menuOpen} panelOpen={menuOpen || repeatMenuOpen} toggleMenu={toggleFavoritesMenu} />
+      <RepeatToggle menuOpen={repeatMenuOpen} panelOpen={menuOpen || repeatMenuOpen} toggleMenu={toggleRepeatMenu} />
       
       <FavoritesMenu
         isOpen={menuOpen}
@@ -91,8 +111,21 @@ export default function App() {
         openRepeatDelayEditor={openRepeatDelayEditor}
         toggleFavorite={player.toggleFavorite}
         toggleFolderFavorite={player.toggleFolderFavorite}
-        toggleMenu={() => setMenuOpen(!menuOpen)}
+        toggleMenu={toggleFavoritesMenu}
         changeFolder={player.changeFolder}
+      />
+
+      <RepeatMenu
+        isOpen={repeatMenuOpen}
+        audioList={player.audioList}
+        playTrack={player.playTrack}
+        playTrackLoop={player.playTrackLoop}
+        playAudio={player.playAudio}
+        repeatDelays={player.repeatDelays}
+        activeLoops={player.activeLoops}
+        formatRepeatDelay={player.formatRepeatDelay}
+        openRepeatDelayEditor={openRepeatDelayEditor}
+        toggleMenu={toggleRepeatMenu}
       />
   
       {/* Panneau Principal en Glassmorphism */}

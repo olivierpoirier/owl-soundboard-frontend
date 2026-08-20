@@ -23,6 +23,14 @@ function getLoopSignature(loop) {
   return `${loop.url}|${loop.repeatDelaySeconds}|${loop.startedAt}`;
 }
 
+function getLoopsSignature(loops = {}) {
+  return Object.values(loops)
+    .filter((loop) => loop?.id)
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((loop) => `${loop.id}:${getLoopSignature(loop)}`)
+    .join("||");
+}
+
 function normalizeAudioUrl(url) {
   return url.replace(/([?&])dl=0(&|$)/, "$1raw=1$2");
 }
@@ -34,6 +42,9 @@ function formatLogTime(date = new Date()) {
 }
 
 function appLog(event, details) {
+  const debugEnabled = localStorage.getItem("owl_soundboard_debug") === "true";
+  if (!debugEnabled) return;
+
   if (details === undefined) {
     console.log(APP_LOG_PREFIX, event);
     return;
@@ -187,6 +198,7 @@ export function useAudioPlayer(apiUrl) {
       return true;
     } catch (error) {
       appWarn("audio:unlock-refused", error);
+      audioUnlockedRef.current = false;
       setAudioUnlocked(false);
       return false;
     }
@@ -265,7 +277,7 @@ export function useAudioPlayer(apiUrl) {
 
     const signature = getLoopSignature(loop);
     const existing = loopPlayersRef.current.get(loop.id);
-    if (existing?.signature === signature && !existing.playFailed) {
+    if (existing?.signature === signature && (!existing.playFailed || !audioUnlockedRef.current)) {
       appLog("repeat:skip-already-synced", { loopId: loop.id, signature });
       return;
     }
@@ -341,6 +353,7 @@ export function useAudioPlayer(apiUrl) {
               name: loop.name,
               error,
             });
+            audioUnlockedRef.current = false;
             setAudioUnlocked(false);
             addLog("warn", "Lecture bloquée par le navigateur. Activation audio requise.");
             showNotification("⚠️ Audio bloqué: cliquez sur Activer l'audio");
@@ -483,35 +496,39 @@ export function useAudioPlayer(apiUrl) {
   const syncPersistentLoops = useCallback((loops, { alignToStartedAt = true } = {}) => {
     const previousLoops = persistentLoopsRef.current || {};
     const nextLoops = loops || {};
+    const loopsChanged = getLoopsSignature(previousLoops) !== getLoopsSignature(nextLoops);
     persistentLoopsRef.current = nextLoops;
-    setActiveLoops(nextLoops);
 
     appLog("repeat:sync-persistent-loops", {
       previousCount: Object.keys(previousLoops).length,
       nextCount: Object.keys(nextLoops).length,
       alignToStartedAt,
       audioUnlocked: audioUnlockedRef.current,
-    });
-
-    Object.values(nextLoops).forEach((loop) => {
-      if (!previousLoops[loop.id]) {
-        addLog("loop", `${loop.senderName || "MJ"} a activé la boucle: ${loop.name || "son"} (${formatRepeatDelay(loop.repeatDelaySeconds)}).`);
-      }
-    });
-    Object.values(previousLoops).forEach((loop) => {
-      if (!nextLoops[loop.id]) {
-        addLog("stop", `Boucle arrêtée: ${loop.name || "son"}.`);
-      }
+      loopsChanged,
     });
 
     const loopEntries = Object.values(nextLoops).filter((loop) => loop?.id && loop?.url);
-    const activeIds = new Set(loopEntries.map((loop) => loop.id));
+    if (loopsChanged) {
+      setActiveLoops(nextLoops);
 
-    loopPlayersRef.current.forEach((_, loopId) => {
-      if (!activeIds.has(loopId)) {
-        stopLoopInstance(loopId);
-      }
-    });
+      Object.values(nextLoops).forEach((loop) => {
+        if (!previousLoops[loop.id]) {
+          addLog("loop", `${loop.senderName || "MJ"} a activé la boucle: ${loop.name || "son"} (${formatRepeatDelay(loop.repeatDelaySeconds)}).`);
+        }
+      });
+      Object.values(previousLoops).forEach((loop) => {
+        if (!nextLoops[loop.id]) {
+          addLog("stop", `Boucle arrêtée: ${loop.name || "son"}.`);
+        }
+      });
+
+      const activeIds = new Set(loopEntries.map((loop) => loop.id));
+      loopPlayersRef.current.forEach((_, loopId) => {
+        if (!activeIds.has(loopId)) {
+          stopLoopInstance(loopId);
+        }
+      });
+    }
 
     if (!audioUnlockedRef.current) return;
 
@@ -568,7 +585,8 @@ export function useAudioPlayer(apiUrl) {
           syncActiveSoundsCount();
         })
         .catch((error) => {
-          console.warn("Lecture audio bloquée par le navigateur :", error);
+          appWarn("audio:play-blocked", error);
+          audioUnlockedRef.current = false;
           setAudioUnlocked(false);
           showNotification("⚠️ Audio bloqué: cliquez sur Activer l'audio");
         });

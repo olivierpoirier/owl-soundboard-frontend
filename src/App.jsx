@@ -7,12 +7,17 @@ import AudioSelector from "./components/AudioSelector";
 import HelpSection from "./components/HelpSection";
 import FavoritesMenu from "./components/FavoritesMenu";
 import StarToggle from "./components/StarToggle";
-import { Upload, Loader2, Info } from "lucide-react";
+import { Upload, Loader2, Info, FolderPlus, Check, X, Clock3, RotateCcw, Volume2 } from "lucide-react";
 
 export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [isStandalone, setIsStandalone] = useState(true);
+  const [folderFormOpen, setFolderFormOpen] = useState(false);
+  const [folderName, setFolderName] = useState("");
+  const [repeatEditorTrack, setRepeatEditorTrack] = useState(null);
+  const [repeatMinutes, setRepeatMinutes] = useState(0);
+  const [repeatSeconds, setRepeatSeconds] = useState(0);
   
   const apiUrl = "https://owl-soundboard-backend.vercel.app/api/dropbox-files";
   const player = useAudioPlayer(apiUrl);
@@ -25,6 +30,38 @@ export default function App() {
       setIsStandalone(true);  // On est seul sur Vercel ou localhost
     }
   }, []);
+
+  const handleCreateFolderSubmit = async (e) => {
+    e.preventDefault();
+    const created = await player.handleCreateFolder(folderName);
+    if (created) {
+      setFolderName("");
+      setFolderFormOpen(false);
+    }
+  };
+
+  const openRepeatDelayEditor = (track) => {
+    const trackKey = track?.path || track?.url;
+    if (!trackKey) return;
+    const savedDelay = Number(player.repeatDelays?.[trackKey]) || 0;
+    setRepeatEditorTrack({ ...track, key: trackKey });
+    setRepeatMinutes(Math.floor(savedDelay / 60));
+    setRepeatSeconds(savedDelay % 60);
+  };
+
+  const handleRepeatDelaySubmit = (e) => {
+    e.preventDefault();
+    const totalSeconds = (Number(repeatMinutes) || 0) * 60 + (Number(repeatSeconds) || 0);
+    player.saveRepeatDelay(repeatEditorTrack?.key, totalSeconds);
+    setRepeatEditorTrack(null);
+  };
+
+  const handleRepeatDelayReset = () => {
+    player.saveRepeatDelay(repeatEditorTrack?.key, 0);
+    setRepeatMinutes(0);
+    setRepeatSeconds(0);
+    setRepeatEditorTrack(null);
+  };
 
   return (
     <div 
@@ -44,7 +81,11 @@ export default function App() {
         folderFavorites={player.folderFavorites}
         audioList={player.audioList}
         playTrack={player.playTrack}
+        playTrackLoop={player.playTrackLoop}
         playAudio={player.playAudio}
+        repeatDelays={player.repeatDelays}
+        formatRepeatDelay={player.formatRepeatDelay}
+        openRepeatDelayEditor={openRepeatDelayEditor}
         toggleFavorite={player.toggleFavorite}
         toggleFolderFavorite={player.toggleFolderFavorite}
         toggleMenu={() => setMenuOpen(!menuOpen)}
@@ -65,6 +106,17 @@ export default function App() {
               Pour profiter pleinement de la synchronisation audio en temps réel avec vos joueurs, intégrez l'URL de ce site directement comme extension dans votre salle **Owlbear Rodeo**.
             </div>
           </div>
+        )}
+
+        {!player.audioUnlocked && (
+          <button
+            type="button"
+            onClick={player.unlockAudio}
+            className="w-full max-w-[380px] h-10 flex items-center justify-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20 hover:border-emerald-300/50 transition-all duration-200 text-xs font-bold"
+          >
+            <Volume2 size={15} />
+            Activer l'audio sur cet appareil
+          </button>
         )}
   
         {player.loading ? (
@@ -104,6 +156,115 @@ export default function App() {
                 disabled={player.isUploading}
               />
             </label>
+
+            {folderFormOpen ? (
+              <form
+                onSubmit={handleCreateFolderSubmit}
+                className="w-full max-w-[380px] flex items-center gap-2"
+              >
+                <input
+                  type="text"
+                  value={folderName}
+                  onChange={(e) => setFolderName(e.target.value)}
+                  disabled={player.isCreatingFolder}
+                  placeholder="Nom du dossier"
+                  className="min-w-0 flex-1 h-10 rounded-xl bg-white/[0.03] border border-white/10 px-3 text-xs text-white/80 placeholder:text-white/25 outline-none focus:border-amber-400/50 focus:bg-amber-400/[0.04]"
+                  autoFocus
+                />
+                <button
+                  type="submit"
+                  disabled={player.isCreatingFolder}
+                  className="w-10 h-10 rounded-xl border border-amber-400/25 bg-amber-400/10 text-amber-300 hover:bg-amber-400/20 transition-colors flex items-center justify-center disabled:opacity-50"
+                  title="Créer le dossier"
+                >
+                  {player.isCreatingFolder ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setFolderFormOpen(false); setFolderName(""); }}
+                  disabled={player.isCreatingFolder}
+                  className="w-10 h-10 rounded-xl border border-white/10 bg-white/[0.03] text-white/40 hover:text-white hover:bg-white/[0.08] transition-colors flex items-center justify-center disabled:opacity-50"
+                  title="Annuler"
+                >
+                  <X size={15} />
+                </button>
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setFolderFormOpen(true)}
+                className="w-full max-w-[380px] h-10 flex items-center justify-center gap-2 border border-white/10 hover:border-amber-400/40 bg-white/[0.03] hover:bg-amber-400/[0.06] rounded-xl group transition-all duration-300"
+              >
+                <FolderPlus className="text-white/40 group-hover:text-amber-300 group-hover:scale-110 transition-all" size={15} />
+                <span className="text-xs font-medium text-white/60 group-hover:text-white transition-colors">
+                  Ajouter un dossier
+                </span>
+              </button>
+            )}
+
+            {repeatEditorTrack && (
+              <form
+                onSubmit={handleRepeatDelaySubmit}
+                className="w-full max-w-[380px] rounded-xl bg-emerald-400/[0.04] border border-emerald-400/20 p-3 flex flex-col gap-3"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex items-center gap-2 text-emerald-200">
+                    <Clock3 size={15} className="shrink-0" />
+                    <span className="truncate text-xs font-semibold">
+                      {repeatEditorTrack.name?.replace(/\.(mp3|wav)$/i, "") || "Répétition"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRepeatEditorTrack(null)}
+                    className="text-white/35 hover:text-white transition-colors"
+                    title="Fermer"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-end">
+                  <label className="min-w-0 flex flex-col gap-1">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-white/35">Min</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1440}
+                      value={repeatMinutes}
+                      onChange={(e) => setRepeatMinutes(e.target.value)}
+                      className="h-9 rounded-lg bg-black/20 border border-white/10 px-2 text-xs text-white/80 outline-none focus:border-emerald-300/50"
+                    />
+                  </label>
+                  <label className="min-w-0 flex flex-col gap-1">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-white/35">Sec</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={59}
+                      value={repeatSeconds}
+                      onChange={(e) => setRepeatSeconds(e.target.value)}
+                      className="h-9 rounded-lg bg-black/20 border border-white/10 px-2 text-xs text-white/80 outline-none focus:border-emerald-300/50"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="w-9 h-9 rounded-lg border border-emerald-300/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20 transition-colors flex items-center justify-center"
+                    title="Sauvegarder"
+                  >
+                    <Check size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRepeatDelayReset}
+                    className="w-9 h-9 rounded-lg border border-white/10 bg-white/[0.03] text-white/40 hover:text-white hover:bg-white/[0.08] transition-colors flex items-center justify-center"
+                    title="Remettre à immédiat"
+                  >
+                    <RotateCcw size={14} />
+                  </button>
+                </div>
+              </form>
+            )}
   
             {/* Sélecteur de fichiers */}
             <AudioSelector
@@ -111,7 +272,11 @@ export default function App() {
               setAudioUrl={player.setAudioUrl}
               audioList={player.audioList}
               playTrack={player.playTrack}
+              playTrackLoop={player.playTrackLoop}
               playAudio={player.playAudio}
+              repeatDelays={player.repeatDelays}
+              formatRepeatDelay={player.formatRepeatDelay}
+              openRepeatDelayEditor={openRepeatDelayEditor}
               favorites={player.favorites}
               toggleFavorite={player.toggleFavorite}
               currentPath={player.currentPath}

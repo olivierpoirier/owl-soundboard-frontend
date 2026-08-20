@@ -31,7 +31,7 @@ export default function AudioControls({ isMuted, toggleMute, volume, handleVolum
       </div>
 
       <button
-        onClick={stopAllSounds}
+        onClick={() => stopAllSounds({ broadcast: true })}
         className="w-full h-11 flex items-center justify-center gap-2 rounded-xl bg-red-950/30 hover:bg-red-900/40 text-red-400 hover:text-red-300 transition-all duration-300 text-xs font-bold border border-red-500/20 hover:border-red-500/40 hover:shadow-[0_0_15px_rgba(239,68,68,0.1)]"
       >
         <Square size={14} className="fill-current" />

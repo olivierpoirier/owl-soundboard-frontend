@@ -5,14 +5,17 @@ import {
   Volume2, 
   Star, 
   Headphones, 
+  Repeat2,
+  Clock3,
   Folder, 
   FolderOpen,
   ArrowLeft 
 } from "lucide-react";
 
 export default function AudioSelector({ 
-  audioList, playTrack, playAudio, favorites, toggleFavorite, 
-  currentPath, changeFolder, goBack, folderFavorites, toggleFolderFavorite 
+  audioList, playTrack, playTrackLoop, playAudio, favorites, toggleFavorite, 
+  currentPath, changeFolder, goBack, folderFavorites, toggleFolderFavorite,
+  repeatDelays, formatRepeatDelay, openRepeatDelayEditor
 }) {
   const itemsPerPage = 6;
   const [page, setPage] = useState(0);
@@ -83,6 +86,8 @@ export default function AudioSelector({
           const isFolderFav = file.isFolder && folderFavorites?.includes(file.path);
           const isTrackFav = !file.isFolder && favorites?.includes(file.url);
           const isFav = isFolderFav || isTrackFav;
+          const trackKey = file.path || file.url;
+          const repeatDelay = !file.isFolder ? Number(repeatDelays?.[trackKey]) || 0 : 0;
 
           return (
             <div
@@ -103,15 +108,41 @@ export default function AudioSelector({
                 <Star size={14} className={isFav ? "fill-current" : ""} />
               </button>
 
+              {!file.isFolder && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); openRepeatDelayEditor(file); }}
+                  className={`absolute top-2 left-2 flex items-center gap-1 rounded-md px-1.5 py-1 transition-all duration-200 ${
+                    repeatDelay > 0
+                      ? "bg-emerald-400/10 text-emerald-200 opacity-100"
+                      : "text-white/20 opacity-0 group-hover:opacity-100 hover:text-emerald-300"
+                  }`}
+                  title="Régler le délai de répétition"
+                >
+                  <Clock3 size={13} />
+                  {repeatDelay > 0 && (
+                    <span className="text-[9px] font-bold leading-none">{formatRepeatDelay(repeatDelay)}</span>
+                  )}
+                </button>
+              )}
+
               {/* Mode Solo (uniquement pour les fichiers) */}
               {!file.isFolder && (
-                <button 
-                  onClick={(e) => { e.stopPropagation(); playAudio(file.url); }}
-                  className="absolute bottom-2 right-2 text-white/20 opacity-0 group-hover:opacity-100 hover:text-purple-400 transition-all duration-200"
-                  title="Écouter en solo"
-                >
-                  <Headphones size={14} />
-                </button>
+                <>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); playTrackLoop(file.url, trackKey); }}
+                    className="absolute bottom-2 left-2 text-white/20 opacity-0 group-hover:opacity-100 hover:text-emerald-300 transition-all duration-200"
+                    title={repeatDelay > 0 ? `Répéter pour tous après ${formatRepeatDelay(repeatDelay)}` : "Jouer en boucle pour tout le monde"}
+                  >
+                    <Repeat2 size={14} />
+                  </button>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); playAudio(file.url); }}
+                    className="absolute bottom-2 right-2 text-white/20 opacity-0 group-hover:opacity-100 hover:text-purple-400 transition-all duration-200"
+                    title="Écouter en solo"
+                  >
+                    <Headphones size={14} />
+                  </button>
+                </>
               )}
 
               {/* Icône principale */}

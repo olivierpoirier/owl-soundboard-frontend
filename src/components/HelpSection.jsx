@@ -24,8 +24,13 @@ export default function HelpSection({ helpOpen, setHelpOpen }) {
           >
             <div className="mt-2.5 p-3.5 bg-white/[0.01] border border-white/5 rounded-xl space-y-2 text-left text-xs text-white/50 leading-relaxed font-medium">
               <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Clic direct sur une tuile : Déclenche le fichier audio de manière synchrone pour la table entière.</p>
+              <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Activer l'audio : Certains navigateurs demandent un clic dans l'extension avant de permettre les sons automatiques.</p>
+              <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Icône <span className="text-emerald-300">Clock</span> : Sauvegarde un délai individuel de répétition en minutes et secondes.</p>
+              <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Icône <span className="text-emerald-300">Repeat</span> : Lance le son en boucle pour toute la table, avec le délai sauvegardé s'il existe.</p>
+              <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Les boucles actives sont restaurées automatiquement pour les joueurs qui rejoignent la salle plus tard.</p>
               <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Icône <span className="text-purple-300">Headphones</span> : Pré-écoute locale exclusive (idéal pour la préparation du MJ).</p>
               <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Icône <span className="text-amber-400">Star</span> : Indexation du son ou dossier associé dans le panneau des favoris.</p>
+              <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Ajouter un dossier : Crée un sous-dossier Dropbox dans le chemin affiché.</p>
               <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Molette de Volume : Ajustement du gain de sortie local (sans incidence sur l'auditoire).</p>
             </div>
           </motion.div>

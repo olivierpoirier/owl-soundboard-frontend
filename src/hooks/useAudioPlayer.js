@@ -3,6 +3,9 @@ import OBR from "@owlbear-rodeo/sdk";
 
 const ROOT_PATH = "/owlbear";
 const ROOM_LOOPS_KEY = "owlbear.soundboard.activeLoops";
+const LOOP_METADATA_TIMEOUT_MS = 2500;
+const MAX_TIMER_DELAY_MS = 60 * 60 * 1000;
+const APP_LOG_PREFIX = "[Owl Soundboard]";
 
 function clampDelay(seconds) {
   return Math.max(0, Math.min(24 * 60 * 60, Number(seconds) || 0));
@@ -28,6 +31,30 @@ function formatLogTime(date = new Date()) {
   return [date.getHours(), date.getMinutes(), date.getSeconds()]
     .map((part) => part.toString().padStart(2, "0"))
     .join(":");
+}
+
+function appLog(event, details) {
+  if (details === undefined) {
+    console.log(APP_LOG_PREFIX, event);
+    return;
+  }
+  console.log(APP_LOG_PREFIX, event, details);
+}
+
+function appWarn(event, details) {
+  if (details === undefined) {
+    console.warn(APP_LOG_PREFIX, event);
+    return;
+  }
+  console.warn(APP_LOG_PREFIX, event, details);
+}
+
+function appError(event, details) {
+  if (details === undefined) {
+    console.error(APP_LOG_PREFIX, event);
+    return;
+  }
+  console.error(APP_LOG_PREFIX, event, details);
 }
 
 export function useAudioPlayer(apiUrl) {
@@ -159,7 +186,7 @@ export function useAudioPlayer(apiUrl) {
       resumePersistentLoopsRef.current();
       return true;
     } catch (error) {
-      console.warn("Déverrouillage audio refusé par le navigateur :", error);
+      appWarn("audio:unlock-refused", error);
       setAudioUnlocked(false);
       return false;
     }
@@ -183,8 +210,18 @@ export function useAudioPlayer(apiUrl) {
     const player = loopPlayersRef.current.get(loopId);
     if (!player) return;
 
+    appLog("repeat:stop-local-instance", {
+      loopId,
+      hadAudio: Boolean(player.audio),
+      hadTimer: Boolean(player.timerId),
+      hadProbe: Boolean(player.probe),
+    });
+
     if (player.timerId) {
       clearTimeout(player.timerId);
+    }
+    if (player.probeTimerId) {
+      clearTimeout(player.probeTimerId);
     }
     if (player.audio) {
       player.audio._owlbearStopped = true;
@@ -228,33 +265,37 @@ export function useAudioPlayer(apiUrl) {
 
     const signature = getLoopSignature(loop);
     const existing = loopPlayersRef.current.get(loop.id);
-    if (existing?.signature === signature) return;
+    if (existing?.signature === signature && !existing.playFailed) {
+      appLog("repeat:skip-already-synced", { loopId: loop.id, signature });
+      return;
+    }
 
     stopLoopInstance(loop.id);
 
     const delay = clampDelay(loop.repeatDelaySeconds);
+    appLog("repeat:start-instance", {
+      loopId: loop.id,
+      name: loop.name,
+      delay,
+      alignToStartedAt,
+      startedAt: loop.startedAt,
+      signature,
+    });
+
     const playFrom = (offsetSeconds = 0) => {
       if (!mountedRef.current) return;
+
+      appLog("repeat:play-from", {
+        loopId: loop.id,
+        name: loop.name,
+        offsetSeconds,
+        delay,
+      });
 
       const audio = new Audio(loop.url);
       audio._owlbearStopped = false;
       audio.volume = mutedRef.current ? 0 : volumeRef.current;
       audio.loop = delay === 0;
-
-      if (offsetSeconds > 0) {
-        audio.currentTime = offsetSeconds;
-      }
-
-      registerLoopPlayer(loop, { audio, timerId: null });
-
-      audio.play()
-        .then(() => setAudioUnlocked(true))
-        .catch((error) => {
-          console.warn("Lecture audio bloquée par le navigateur :", error);
-          setAudioUnlocked(false);
-          addLog("warn", "Lecture bloquée par le navigateur. Activation audio requise.");
-          showNotification("⚠️ Audio bloqué: cliquez sur Activer l'audio");
-        });
 
       audio.addEventListener("ended", () => {
         if (audio._owlbearStopped || delay === 0) return;
@@ -262,6 +303,12 @@ export function useAudioPlayer(apiUrl) {
         const current = loopPlayersRef.current.get(loop.id);
         if (!current || current.audio !== audio) return;
         audio.src = "";
+
+        appLog("repeat:ended-scheduling-next-play", {
+          loopId: loop.id,
+          name: loop.name,
+          delay,
+        });
 
         const timerId = setTimeout(() => {
           const waiting = loopPlayersRef.current.get(loop.id);
@@ -272,15 +319,102 @@ export function useAudioPlayer(apiUrl) {
 
         registerLoopPlayer(loop, { audio: null, timerId });
       });
+
+      const startPlayback = () => {
+        const current = loopPlayersRef.current.get(loop.id);
+        if (!current || current.audio !== audio || audio._owlbearStopped) return;
+
+        audio.play()
+          .then(() => {
+            audioUnlockedRef.current = true;
+            setAudioUnlocked(true);
+            appLog("repeat:play-ok", {
+              loopId: loop.id,
+              name: loop.name,
+              currentTime: audio.currentTime,
+              duration: audio.duration,
+            });
+          })
+          .catch((error) => {
+            appWarn("repeat:play-blocked", {
+              loopId: loop.id,
+              name: loop.name,
+              error,
+            });
+            setAudioUnlocked(false);
+            addLog("warn", "Lecture bloquée par le navigateur. Activation audio requise.");
+            showNotification("⚠️ Audio bloqué: cliquez sur Activer l'audio");
+
+            const latest = loopPlayersRef.current.get(loop.id);
+            if (latest?.audio === audio) {
+              loopPlayersRef.current.set(loop.id, { ...latest, playFailed: true });
+              syncActiveSoundsCount();
+            }
+          });
+      };
+
+      registerLoopPlayer(loop, { audio, timerId: null });
+
+      if (offsetSeconds > 0) {
+        const seekAndPlay = () => {
+          const current = loopPlayersRef.current.get(loop.id);
+          if (!current || current.audio !== audio || audio._owlbearStopped) return;
+
+          const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+          const safeOffset = duration > 0 ? Math.min(offsetSeconds, Math.max(0, duration - 0.05)) : offsetSeconds;
+          try {
+            audio.currentTime = safeOffset;
+          } catch (error) {
+            appWarn("repeat:seek-failed", {
+              loopId: loop.id,
+              name: loop.name,
+              offsetSeconds,
+              safeOffset,
+              error,
+            });
+          }
+          startPlayback();
+        };
+
+        audio.addEventListener("loadedmetadata", seekAndPlay, { once: true });
+        audio.addEventListener("error", startPlayback, { once: true });
+        audio.load?.();
+        return;
+      }
+
+      startPlayback();
     };
 
     const scheduleAfter = (waitSeconds) => {
+      const startedAt = Date.now();
+      const waitMs = Math.max(0, waitSeconds * 1000);
+      appLog("repeat:schedule-next-play", {
+        loopId: loop.id,
+        name: loop.name,
+        waitSeconds,
+        cappedTimerMs: Math.min(waitMs, MAX_TIMER_DELAY_MS),
+      });
+
       const timerId = setTimeout(() => {
         const waiting = loopPlayersRef.current.get(loop.id);
         if (!waiting || waiting.timerId !== timerId) return;
+
+        const elapsedSeconds = (Date.now() - startedAt) / 1000;
+        const remainingSeconds = Math.max(0, waitSeconds - elapsedSeconds);
+        if (remainingSeconds > 0.5) {
+          appLog("repeat:timer-cap-continue-waiting", {
+            loopId: loop.id,
+            name: loop.name,
+            remainingSeconds,
+          });
+          loopPlayersRef.current.delete(loop.id);
+          scheduleAfter(remainingSeconds);
+          return;
+        }
+
         loopPlayersRef.current.delete(loop.id);
         playFrom(0);
-      }, waitSeconds * 1000);
+      }, Math.min(waitMs, MAX_TIMER_DELAY_MS));
 
       registerLoopPlayer(loop, { audio: null, timerId });
     };
@@ -292,13 +426,26 @@ export function useAudioPlayer(apiUrl) {
 
     const probe = new Audio(loop.url);
     probe.preload = "metadata";
-    registerLoopPlayer(loop, { audio: null, timerId: null, probe });
-    probe.addEventListener("loadedmetadata", () => {
+    let probeTimerId = null;
+    let probeResolved = false;
+
+    const resolveProbe = (duration = 0) => {
+      if (probeResolved) return;
+      probeResolved = true;
+      if (probeTimerId) clearTimeout(probeTimerId);
+
       const current = loopPlayersRef.current.get(loop.id);
       if (!current || current.signature !== signature || current.probe !== probe) return;
 
-      const duration = Number.isFinite(probe.duration) && probe.duration > 0 ? probe.duration : 0;
-      if (duration === 0) {
+      probe.src = "";
+      appLog("repeat:metadata-resolved", {
+        loopId: loop.id,
+        name: loop.name,
+        duration,
+        delay,
+      });
+
+      if (!Number.isFinite(duration) || duration <= 0) {
         playFrom(0);
         return;
       }
@@ -312,19 +459,39 @@ export function useAudioPlayer(apiUrl) {
       } else {
         scheduleAfter(cycleLength - phase);
       }
-    });
+    };
+
+    probe.addEventListener("loadedmetadata", () => {
+      resolveProbe(Number.isFinite(probe.duration) && probe.duration > 0 ? probe.duration : 0);
+    }, { once: true });
     probe.addEventListener("error", () => {
-      const current = loopPlayersRef.current.get(loop.id);
-      if (!current || current.signature !== signature || current.probe !== probe) return;
-      playFrom(0);
-    });
-  }, [addLog, registerLoopPlayer, showNotification, stopLoopInstance]);
+      appWarn("repeat:metadata-error", { loopId: loop.id, name: loop.name });
+      resolveProbe(0);
+    }, { once: true });
+    probeTimerId = setTimeout(() => {
+      appWarn("repeat:metadata-timeout", {
+        loopId: loop.id,
+        name: loop.name,
+        timeoutMs: LOOP_METADATA_TIMEOUT_MS,
+      });
+      resolveProbe(0);
+    }, LOOP_METADATA_TIMEOUT_MS);
+    registerLoopPlayer(loop, { audio: null, timerId: null, probe, probeTimerId });
+    probe.load?.();
+  }, [addLog, registerLoopPlayer, showNotification, stopLoopInstance, syncActiveSoundsCount]);
 
   const syncPersistentLoops = useCallback((loops, { alignToStartedAt = true } = {}) => {
     const previousLoops = persistentLoopsRef.current || {};
     const nextLoops = loops || {};
     persistentLoopsRef.current = nextLoops;
     setActiveLoops(nextLoops);
+
+    appLog("repeat:sync-persistent-loops", {
+      previousCount: Object.keys(previousLoops).length,
+      nextCount: Object.keys(nextLoops).length,
+      alignToStartedAt,
+      audioUnlocked: audioUnlockedRef.current,
+    });
 
     Object.values(nextLoops).forEach((loop) => {
       if (!previousLoops[loop.id]) {
@@ -358,6 +525,12 @@ export function useAudioPlayer(apiUrl) {
   }, [syncPersistentLoops]);
 
   const persistLoop = useCallback(async (loop) => {
+    appLog("repeat:persist-start", {
+      loopId: loop.id,
+      name: loop.name,
+      repeatDelaySeconds: loop.repeatDelaySeconds,
+    });
+
     const metadata = await OBR.room.getMetadata();
     const loops = getLoopsFromMetadata(metadata);
     await OBR.room.setMetadata({
@@ -369,9 +542,11 @@ export function useAudioPlayer(apiUrl) {
         },
       },
     });
+    appLog("repeat:persist-ok", { loopId: loop.id, name: loop.name });
   }, []);
 
   const clearPersistentLoops = useCallback(async () => {
+    appLog("repeat:clear-persistent-loops");
     await OBR.room.setMetadata({
       [ROOM_LOOPS_KEY]: {
         version: 1,
@@ -403,7 +578,7 @@ export function useAudioPlayer(apiUrl) {
         syncActiveSoundsCount();
       });
     } catch (e) {
-      console.error("Impossible de créer l'instance Audio :", e);
+      appError("audio:create-instance-failed", e);
     }
   }, [showNotification, syncActiveSoundsCount]);
 
@@ -447,6 +622,10 @@ export function useAudioPlayer(apiUrl) {
         const unsubscribePlay = OBR.broadcast.onMessage("mini-tracks-play", (event) => {
           const { url, senderName } = event.data || {};
           if (!url) return;
+          appLog("obr:broadcast-play-received", {
+            name: event.data?.name,
+            senderName,
+          });
           addLog("play", `${senderName || "MJ"} a joué: ${event.data?.name || "son"}.`);
           showNotification(`🔊 Son déclenché par ${senderName || "MJ"}`);
           playAudio(url);
@@ -454,6 +633,7 @@ export function useAudioPlayer(apiUrl) {
 
         const unsubscribeStop = OBR.broadcast.onMessage("mini-tracks-stop", (event) => {
           const { senderName } = event.data || {};
+          appLog("obr:broadcast-stop-received", { senderName });
           addLog("stop", `${senderName || "MJ"} a arrêté tous les sons.`);
           showNotification(`⏹️ Sons arrêtés par ${senderName || "MJ"}`);
           clearLocalSounds();
@@ -465,13 +645,16 @@ export function useAudioPlayer(apiUrl) {
         syncPersistentLoops(getLoopsFromMetadata(metadata), { alignToStartedAt: true });
 
         const unsubscribeMetadata = OBR.room.onMetadataChange((metadataUpdate) => {
+          appLog("obr:metadata-change", {
+            loopCount: Object.keys(getLoopsFromMetadata(metadataUpdate)).length,
+          });
           syncPersistentLoops(getLoopsFromMetadata(metadataUpdate), { alignToStartedAt: true });
         });
 
         obrUnsubscribesRef.current = [unsubscribePlay, unsubscribeStop, unsubscribeMetadata];
       });
     } catch (e) {
-      console.warn("OBR non détecté (hors d'Owlbear Rodeo)", e);
+      appWarn("obr:not-detected", e);
     }
   }, [addLog, clearLocalSounds, playAudio, showNotification, syncPersistentLoops]);
 
@@ -499,7 +682,10 @@ export function useAudioPlayer(apiUrl) {
       setAudioList([...folders, ...fixedFiles]);
       if (fixedFiles.length > 0) setAudioUrl(fixedFiles[0].url);
     } catch (error) {
-      console.error("Erreur lors de la récupération des audios:", error);
+      appError("dropbox:fetch-audio-list-failed", {
+        path: targetPath,
+        error,
+      });
       setDbError(true);
       setAudioList([]);
     } finally {
@@ -558,7 +744,11 @@ export function useAudioPlayer(apiUrl) {
       try {
         await removePersistentLoop(loopId);
       } catch (error) {
-        console.warn("Impossible d'arrêter la boucle active :", error);
+        appWarn("repeat:remove-persistent-loop-failed", {
+          loopId,
+          name,
+          error,
+        });
         showNotification("⚠️ Boucle arrêtée localement, mais non sauvegardée");
       }
     });
@@ -590,13 +780,23 @@ export function useAudioPlayer(apiUrl) {
 
     OBR.player.getName().then(async (playerName) => {
       const loopWithSender = { ...loop, senderName: playerName || "MJ" };
+      appLog("repeat:toggle-start", {
+        loopId,
+        name,
+        playerName: playerName || "MJ",
+        delay,
+      });
       startLoopInstance(loopWithSender);
       syncPersistentLoops({ ...(persistentLoopsRef.current || {}), [loopId]: loopWithSender }, { alignToStartedAt: false });
       showNotification(delay > 0 ? `🔁 Répétition après ${formatRepeatDelay(delay)}` : "🔁 Boucle démarrée");
       try {
         await persistLoop(loopWithSender);
       } catch (error) {
-        console.warn("Impossible de sauvegarder la boucle active :", error);
+        appWarn("repeat:persist-failed", {
+          loopId,
+          name,
+          error,
+        });
         showNotification("⚠️ Boucle lancée localement, mais non sauvegardée");
       }
     });
@@ -635,11 +835,11 @@ export function useAudioPlayer(apiUrl) {
           fetchAudioList(currentPath);
         } else {
           showNotification("❌ Échec de l'upload.");
-        }
-      } catch (err) {
-        console.error(err);
-        showNotification("❌ Erreur serveur.");
-      } finally {
+      }
+    } catch (err) {
+      appError("dropbox:upload-failed", err);
+      showNotification("❌ Erreur serveur.");
+    } finally {
         setIsUploading(false);
         e.target.value = "";
       }
@@ -673,7 +873,7 @@ export function useAudioPlayer(apiUrl) {
       showNotification(response.status === 409 ? "⚠️ Ce dossier existe déjà" : "❌ Échec de la création.");
       return false;
     } catch (err) {
-      console.error(err);
+      appError("dropbox:create-folder-failed", err);
       showNotification("❌ Erreur serveur.");
       return false;
     } finally {
@@ -720,6 +920,31 @@ export function useAudioPlayer(apiUrl) {
     localStorage.setItem("owlbear_repeat_delays", JSON.stringify(updated));
     addLog("system", sanitizedDelay > 0 ? `Délai de répétition sauvegardé: ${formatRepeatDelay(sanitizedDelay)}.` : "Délai de répétition remis à immédiat.");
     showNotification(sanitizedDelay > 0 ? `✅ Répétition : ${formatRepeatDelay(sanitizedDelay)}` : "✅ Répétition immédiate");
+
+    const activeLoop = persistentLoopsRef.current?.[trackKey];
+    if (!activeLoop) return;
+
+    const updatedLoop = {
+      ...activeLoop,
+      repeatDelaySeconds: sanitizedDelay,
+      startedAt: Date.now(),
+    };
+    const nextLoops = {
+      ...(persistentLoopsRef.current || {}),
+      [trackKey]: updatedLoop,
+    };
+    syncPersistentLoops(nextLoops, { alignToStartedAt: false });
+
+    if (isReady) {
+      persistLoop(updatedLoop).catch((error) => {
+        appWarn("repeat:update-active-delay-failed", {
+          trackKey,
+          sanitizedDelay,
+          error,
+        });
+        showNotification("⚠️ Répétition changée localement, mais non sauvegardée");
+      });
+    }
   };
 
   const handleVolumeChange = (newVolume) => {
@@ -759,7 +984,7 @@ export function useAudioPlayer(apiUrl) {
         try {
           await clearPersistentLoops();
         } catch (error) {
-          console.warn("Impossible de vider les boucles actives :", error);
+          appWarn("repeat:clear-persistent-loops-failed", error);
           showNotification("⚠️ Sons arrêtés localement, mais boucles non sauvegardées");
         }
       });

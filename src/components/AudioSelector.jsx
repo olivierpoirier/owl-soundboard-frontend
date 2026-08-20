@@ -145,18 +145,18 @@ export default function AudioSelector({
                     />
                   </div>
 
-                  <div className="absolute bottom-11 left-3 right-3 truncate text-xs font-semibold text-white/75 transition-colors group-hover:text-white">
+                  <div className="absolute bottom-[48px] left-3 right-3 h-4 truncate text-xs font-semibold leading-4 text-white/75 transition-colors group-hover:text-white">
                     {displayName}
                   </div>
 
-                  <div className="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-2">
+                  <div className="absolute bottom-2 left-1/2 grid w-[112px] -translate-x-1/2 grid-cols-3 items-center gap-2">
                     <Button
                       icon={Repeat2}
                       size="icon"
                       variant="toggle"
                       active={repeatActive}
                       onClick={(e) => { e.stopPropagation(); playTrackLoop(file.url, trackKey, displayName); }}
-                      className={`h-8 w-8 ${repeatActive ? "text-emerald-300" : "text-white/35 hover:text-emerald-300"}`}
+                      className={`h-8 w-8 justify-self-center ${repeatActive ? "text-emerald-300" : "text-white/35 hover:text-emerald-300"}`}
                       title={repeatActive ? "Arrêter cette boucle" : repeatDelay > 0 ? `Répéter pour tous après ${formatRepeatDelay(repeatDelay)}` : "Jouer en boucle pour tout le monde"}
                     />
                     <Button
@@ -165,7 +165,7 @@ export default function AudioSelector({
                       variant="toggle"
                       active={repeatDelay > 0}
                       onClick={(e) => { e.stopPropagation(); openRepeatDelayEditor(file); }}
-                      className={`h-8 w-8 ${repeatDelay > 0 ? "text-emerald-200" : "text-white/35 hover:text-emerald-300"}`}
+                      className={`h-8 w-8 justify-self-center ${repeatDelay > 0 ? "text-emerald-200" : "text-white/35 hover:text-emerald-300"}`}
                       title="Régler le délai de répétition"
                     />
                     <Button
@@ -173,7 +173,7 @@ export default function AudioSelector({
                       size="icon"
                       variant="ghost"
                       onClick={(e) => { e.stopPropagation(); playAudio(file.url); }}
-                      className="h-8 w-8 text-white/35 hover:text-purple-300"
+                      className="h-8 w-8 justify-self-center text-white/35 hover:text-purple-300"
                       title="Écouter en solo"
                     />
                   </div>

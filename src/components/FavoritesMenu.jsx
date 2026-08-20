@@ -74,24 +74,24 @@ export default function FavoritesMenu({
 
             return (
               <div
-                key={file.name}
-                className={`group relative flex items-center justify-between bg-white/[0.02] border rounded-lg p-2.5 text-xs transition-all ${
+                key={file.path || file.url}
+                className={`group relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 bg-white/[0.02] border rounded-lg p-2.5 text-xs transition-all ${
                   repeatActive
                     ? "border-emerald-400/30 bg-emerald-400/[0.04]"
                     : "border-white/5 hover:border-purple-500/30 hover:bg-purple-500/[0.02]"
                 }`}
               >
-                <div className="flex items-center gap-2 truncate text-white/70 group-hover:text-white max-w-[58%]">
+                <div className="min-w-0 flex items-center gap-2 text-white/70 group-hover:text-white">
                   <Volume2 size={14} className="text-purple-400 shrink-0" />
                   <span className="truncate">{displayName}</span>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="grid grid-cols-5 items-center gap-1 shrink-0">
                   <Button
                     icon={Volume2}
                     size="icon"
                     variant="ghost"
                     onClick={(e) => { e.stopPropagation(); playTrack(file.url, displayName); }}
-                    className="h-7 w-7 text-white/30 hover:text-purple-300"
+                    className="h-7 w-7 justify-self-center text-white/30 hover:text-purple-300"
                     title="Jouer pour tous"
                   />
                   <Button
@@ -100,7 +100,7 @@ export default function FavoritesMenu({
                     variant="toggle"
                     active={repeatDelay > 0}
                     onClick={(e) => { e.stopPropagation(); openRepeatDelayEditor(file); toggleMenu(); }}
-                    className={`h-7 w-7 ${repeatDelay > 0 ? "text-emerald-200" : "text-white/30 hover:text-emerald-300"}`}
+                    className={`h-7 w-7 justify-self-center ${repeatDelay > 0 ? "text-emerald-200" : "text-white/30 hover:text-emerald-300"}`}
                     title="Régler le délai"
                   />
                   <Button
@@ -109,7 +109,7 @@ export default function FavoritesMenu({
                     variant="toggle"
                     active={repeatActive}
                     onClick={(e) => { e.stopPropagation(); playTrackLoop(file.url, trackKey, displayName); }}
-                    className={`h-7 w-7 ${repeatActive ? "text-emerald-300" : "text-white/30 hover:text-emerald-300"}`}
+                    className={`h-7 w-7 justify-self-center ${repeatActive ? "text-emerald-300" : "text-white/30 hover:text-emerald-300"}`}
                     title={repeatActive ? "Arrêter cette boucle" : repeatDelay > 0 ? `Répéter après ${formatRepeatDelay(repeatDelay)}` : "Boucle pour tous"}
                   />
                   <Button
@@ -117,7 +117,7 @@ export default function FavoritesMenu({
                     size="icon"
                     variant="ghost"
                     onClick={(e) => { e.stopPropagation(); playAudio(file.url); }}
-                    className="h-7 w-7 text-white/30 hover:text-purple-400"
+                    className="h-7 w-7 justify-self-center text-white/30 hover:text-purple-400"
                     title="Solo"
                   />
                   <Button
@@ -125,7 +125,7 @@ export default function FavoritesMenu({
                     size="icon"
                     variant="ghost"
                     onClick={(e) => { e.stopPropagation(); toggleFavorite(file.url); }}
-                    className="h-7 w-7 text-amber-400"
+                    className="h-7 w-7 justify-self-center text-amber-400"
                   />
                 </div>
               </div>

@@ -64,7 +64,7 @@ export default function Button({
       disabled={isDisabled}
       type={type}
       className={cn(
-        "relative inline-flex shrink-0 items-center justify-center gap-2 overflow-hidden rounded-full border font-medium transition-all",
+        "relative inline-flex shrink-0 items-center justify-center gap-2 overflow-hidden rounded-full border font-medium leading-none transition-all",
         "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[color-mix(in_oklab,var(--c1)_24%,transparent)]",
         "disabled:cursor-not-allowed disabled:opacity-35",
         variant === "primary" && "font-mono font-black uppercase tracking-tight italic",
@@ -75,13 +75,13 @@ export default function Button({
     >
       {LoaderIcon && (
         <LoaderIcon
-          className={cn(iconSizeClasses[size], loading && "animate-spin")}
+          className={cn("block shrink-0", iconSizeClasses[size], loading && "animate-spin")}
           aria-hidden="true"
         />
       )}
       {children && <span className="min-w-0 truncate">{children}</span>}
       {IconEnd && !loading && (
-        <IconEnd className={iconSizeClasses[size]} aria-hidden="true" />
+        <IconEnd className={cn("block shrink-0", iconSizeClasses[size])} aria-hidden="true" />
       )}
     </button>
   );

@@ -104,24 +104,23 @@ export default function AudioSelector({
               }`}
               title={file.isFolder ? "Ouvrir le dossier" : "Jouer pour tout le monde"}
             >
-              {/* Étoile Favori */}
-              <Button
-                icon={Star}
-                size="icon"
-                variant="ghost"
-                active={isFav}
-                onClick={(e) => { 
-                  e.stopPropagation(); 
-                  file.isFolder ? toggleFolderFavorite(file.path) : toggleFavorite(file.url); 
-                }}
-                className={`absolute top-2 right-2 h-7 w-7 ${
-                  isFav ? "text-amber-400 opacity-100 [&>svg]:fill-current" : "text-white/35 opacity-70 hover:text-amber-300 hover:opacity-100"
-                }`}
-                title={isFav ? "Retirer des favoris" : "Ajouter aux favoris"}
-              />
-
               {file.isFolder ? (
                 <>
+                  <Button
+                    icon={Star}
+                    size="icon"
+                    variant="ghost"
+                    active={isFav}
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      toggleFolderFavorite(file.path); 
+                    }}
+                    className={`absolute top-2 right-2 h-7 w-7 ${
+                      isFav ? "text-amber-400 opacity-100 [&>svg]:fill-current" : "text-white/35 opacity-70 hover:text-amber-300 hover:opacity-100"
+                    }`}
+                    title={isFav ? "Retirer des favoris" : "Ajouter aux favoris"}
+                  />
+
                   <FolderOpen size={28} className="text-amber-400/80 mb-2 group-hover:scale-110 transition-transform duration-300 group-hover:text-amber-400" />
                   <div className="text-xs font-medium text-white/70 group-hover:text-white truncate w-full max-w-[120px] transition-colors">
                     {displayName}
@@ -146,7 +145,7 @@ export default function AudioSelector({
                     {displayName}
                   </div>
 
-                  <div className="absolute bottom-2 left-1/2 grid w-[72px] -translate-x-1/2 grid-cols-2 items-center gap-2">
+                  <div className="absolute bottom-2 left-1/2 grid w-[112px] -translate-x-1/2 grid-cols-3 items-center gap-2">
                     <Button
                       icon={Volume2}
                       size="icon"
@@ -154,6 +153,20 @@ export default function AudioSelector({
                       onClick={(e) => { e.stopPropagation(); playTrack(file.url, displayName); }}
                       className="h-8 w-8 justify-self-center text-white/35 hover:text-purple-300"
                       title="Jouer pour tout le monde"
+                    />
+                    <Button
+                      icon={Star}
+                      size="icon"
+                      variant="ghost"
+                      active={isFav}
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        toggleFavorite(file.url); 
+                      }}
+                      className={`h-8 w-8 justify-self-center ${
+                        isFav ? "text-amber-400 [&>svg]:fill-current" : "text-white/35 hover:text-amber-300"
+                      }`}
+                      title={isFav ? "Retirer des favoris" : "Ajouter aux favoris"}
                     />
                     <Button
                       icon={Headphones}

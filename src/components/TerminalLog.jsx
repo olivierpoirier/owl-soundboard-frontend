@@ -30,8 +30,8 @@ export default function TerminalLog({ entries }) {
 
       <div className="max-h-36 overflow-y-auto px-3 py-2 space-y-1 font-mono text-[10px] leading-relaxed">
         {entries?.map((entry) => (
-          <div key={entry.id} className="grid grid-cols-[58px_42px_1fr] gap-2 text-white/58">
-            <span className="text-white/25">{entry.time}</span>
+          <div key={entry.id} className="grid grid-cols-[72px_42px_minmax(0,1fr)] gap-2 text-white/58">
+            <span className="whitespace-nowrap text-white/25">{entry.time}</span>
             <span className={typeClasses[entry.type] || "text-white/45"}>
               {typeLabels[entry.type] || "LOG"}
             </span>

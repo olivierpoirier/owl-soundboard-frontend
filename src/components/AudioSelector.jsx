@@ -96,12 +96,12 @@ export default function AudioSelector({
             <div
               key={file.path || file.url}
               onClick={() => file.isFolder && changeFolder(file.path)}
-              className={`relative aspect-[4/3] bg-white/[0.02] border rounded-xl p-4 flex flex-col items-center justify-center text-center transition-all duration-300 group hover:-translate-y-0.5 ${
+              className={`relative h-[138px] min-h-0 bg-white/[0.02] border rounded-xl p-4 flex flex-col items-center justify-center text-center transition-all duration-300 group hover:-translate-y-0.5 ${
                 file.isFolder
                   ? "cursor-pointer border-white/10 hover:bg-purple-500/[0.04] hover:border-purple-500/40 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)]"
                   : repeatActive
-                    ? "cursor-default border-emerald-400/40 bg-emerald-400/[0.04] shadow-[0_0_18px_rgba(52,211,153,0.08)]"
-                    : "cursor-default border-white/10 hover:border-white/20"
+                    ? "cursor-default overflow-hidden border-emerald-400/40 bg-emerald-400/[0.04] shadow-[0_0_18px_rgba(52,211,153,0.08)]"
+                    : "cursor-default overflow-hidden border-white/10 hover:border-white/20"
               }`}
             >
               {/* Étoile Favori */}
@@ -119,71 +119,66 @@ export default function AudioSelector({
                 }`}
               />
 
-              {!file.isFolder && (
-                <Button
-                  icon={Clock3}
-                  size="icon"
-                  variant="toggle"
-                  active={repeatDelay > 0}
-                  onClick={(e) => { e.stopPropagation(); openRepeatDelayEditor(file); }}
-                  className={`absolute top-2 left-2 flex items-center gap-1 rounded-md px-1.5 py-1 transition-all duration-200 ${
-                    repeatDelay > 0
-                      ? "bg-emerald-400/10 text-emerald-200 opacity-100"
-                      : "text-white/20 opacity-0 group-hover:opacity-100 hover:text-emerald-300"
-                  }`}
-                  title="Régler le délai de répétition"
-                >
-                  {repeatDelay > 0 && (
-                    <span className="text-[9px] font-bold leading-none">{formatRepeatDelay(repeatDelay)}</span>
-                  )}
-                </Button>
-              )}
-
-              {/* Mode Solo (uniquement pour les fichiers) */}
-              {!file.isFolder && (
+              {file.isFolder ? (
                 <>
-                  <Button
-                    icon={Volume2}
-                    variant="primary"
-                    size="sm"
-                    onClick={(e) => { e.stopPropagation(); playTrack(file.url, displayName); }}
-                    className="absolute inset-x-10 top-1/2 -translate-y-1/2 h-12 rounded-xl flex items-center justify-center gap-2 bg-purple-500/10 border border-purple-400/20 text-purple-200 hover:bg-purple-500/20 hover:border-purple-300/40 transition-all duration-200"
-                    title="Jouer pour tout le monde"
-                  />
-                  <Button
-                    icon={Repeat2}
-                    size="icon"
-                    variant="toggle"
-                    active={repeatActive}
-                    onClick={(e) => { e.stopPropagation(); playTrackLoop(file.url, trackKey, displayName); }}
-                    className={`absolute bottom-2 left-2 h-8 w-8 ${
-                      repeatActive
-                        ? "text-emerald-300 opacity-100"
-                        : "text-white/20 opacity-0 group-hover:opacity-100 hover:text-emerald-300"
-                    }`}
-                    title={repeatActive ? "Arrêter cette boucle" : repeatDelay > 0 ? `Répéter pour tous après ${formatRepeatDelay(repeatDelay)}` : "Jouer en boucle pour tout le monde"}
-                  />
-                  <Button
-                    icon={Headphones}
-                    size="icon"
-                    variant="ghost"
-                    onClick={(e) => { e.stopPropagation(); playAudio(file.url); }}
-                    className="absolute bottom-2 right-2 h-8 w-8 text-white/20 opacity-0 group-hover:opacity-100 hover:text-purple-400 transition-all duration-200"
-                    title="Écouter en solo"
-                  />
+                  <FolderOpen size={28} className="text-amber-400/80 mb-2 group-hover:scale-110 transition-transform duration-300 group-hover:text-amber-400" />
+                  <div className="text-xs font-medium text-white/70 group-hover:text-white truncate w-full max-w-[120px] transition-colors">
+                    {displayName}
+                  </div>
+                </>
+              ) : (
+                <>
+                  {repeatDelay > 0 && (
+                    <span className="absolute top-2 left-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 font-mono text-[9px] font-bold text-emerald-200">
+                      {formatRepeatDelay(repeatDelay)}
+                    </span>
+                  )}
+
+                  <div className="absolute inset-x-0 top-9 flex justify-center">
+                    <Button
+                      icon={Volume2}
+                      variant="primary"
+                      size="icon"
+                      onClick={(e) => { e.stopPropagation(); playTrack(file.url, displayName); }}
+                      className="h-10 w-10 rounded-full"
+                      title="Jouer pour tout le monde"
+                    />
+                  </div>
+
+                  <div className="absolute bottom-11 left-3 right-3 truncate text-xs font-semibold text-white/75 transition-colors group-hover:text-white">
+                    {displayName}
+                  </div>
+
+                  <div className="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-2">
+                    <Button
+                      icon={Repeat2}
+                      size="icon"
+                      variant="toggle"
+                      active={repeatActive}
+                      onClick={(e) => { e.stopPropagation(); playTrackLoop(file.url, trackKey, displayName); }}
+                      className={`h-8 w-8 ${repeatActive ? "text-emerald-300" : "text-white/35 hover:text-emerald-300"}`}
+                      title={repeatActive ? "Arrêter cette boucle" : repeatDelay > 0 ? `Répéter pour tous après ${formatRepeatDelay(repeatDelay)}` : "Jouer en boucle pour tout le monde"}
+                    />
+                    <Button
+                      icon={Clock3}
+                      size="icon"
+                      variant="toggle"
+                      active={repeatDelay > 0}
+                      onClick={(e) => { e.stopPropagation(); openRepeatDelayEditor(file); }}
+                      className={`h-8 w-8 ${repeatDelay > 0 ? "text-emerald-200" : "text-white/35 hover:text-emerald-300"}`}
+                      title="Régler le délai de répétition"
+                    />
+                    <Button
+                      icon={Headphones}
+                      size="icon"
+                      variant="ghost"
+                      onClick={(e) => { e.stopPropagation(); playAudio(file.url); }}
+                      className="h-8 w-8 text-white/35 hover:text-purple-300"
+                      title="Écouter en solo"
+                    />
+                  </div>
                 </>
               )}
-
-              {/* Icône principale */}
-              {file.isFolder ? (
-                <FolderOpen size={28} className="text-amber-400/80 mb-2 group-hover:scale-110 transition-transform duration-300 group-hover:text-amber-400" />
-              ) : (
-                <div className="h-9 mb-8" />
-              )}
-              
-              <div className="text-xs font-medium text-white/70 group-hover:text-white truncate w-full max-w-[120px] transition-colors">
-                {displayName}
-              </div>
             </div>
           );
         })}

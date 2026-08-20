@@ -24,6 +24,12 @@ function normalizeAudioUrl(url) {
   return url.replace(/([?&])dl=0(&|$)/, "$1raw=1$2");
 }
 
+function formatLogTime(date = new Date()) {
+  return [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map((part) => part.toString().padStart(2, "0"))
+    .join(":");
+}
+
 export function useAudioPlayer(apiUrl) {
   const oneShotAudiosRef = useRef([]);
   const loopPlayersRef = useRef(new Map());
@@ -50,7 +56,7 @@ export function useAudioPlayer(apiUrl) {
   const [activeLoops, setActiveLoops] = useState({});
   const [eventLog, setEventLog] = useState(() => [{
     id: "boot",
-    time: new Date().toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+    time: formatLogTime(),
     type: "system",
     message: "Terminal audio prêt.",
   }]);
@@ -114,7 +120,7 @@ export function useAudioPlayer(apiUrl) {
   const addLog = useCallback((type, message) => {
     const entry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      time: new Date().toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      time: formatLogTime(),
       type,
       message,
     };
@@ -122,6 +128,10 @@ export function useAudioPlayer(apiUrl) {
   }, []);
 
   const unlockAudio = useCallback(async () => {
+    if (audioUnlockedRef.current) {
+      return true;
+    }
+
     try {
       if (window.AudioContext || window.webkitAudioContext) {
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -573,7 +583,7 @@ export function useAudioPlayer(apiUrl) {
 
     if (!isReady) {
       startLoopInstance(loop);
-      addLog("loop", `Boucle locale activée: ${name} (${formatRepeatDelay(delay)}).`);
+      syncPersistentLoops({ ...(persistentLoopsRef.current || {}), [loopId]: loop }, { alignToStartedAt: false });
       showNotification(delay > 0 ? `🔁 Répétition locale après ${formatRepeatDelay(delay)}` : "🔁 Boucle locale démarrée");
       return;
     }
@@ -581,7 +591,7 @@ export function useAudioPlayer(apiUrl) {
     OBR.player.getName().then(async (playerName) => {
       const loopWithSender = { ...loop, senderName: playerName || "MJ" };
       startLoopInstance(loopWithSender);
-      addLog("loop", `${playerName || "MJ"} a activé la boucle: ${name} (${formatRepeatDelay(delay)}).`);
+      syncPersistentLoops({ ...(persistentLoopsRef.current || {}), [loopId]: loopWithSender }, { alignToStartedAt: false });
       showNotification(delay > 0 ? `🔁 Répétition après ${formatRepeatDelay(delay)}` : "🔁 Boucle démarrée");
       try {
         await persistLoop(loopWithSender);
@@ -590,7 +600,7 @@ export function useAudioPlayer(apiUrl) {
         showNotification("⚠️ Boucle lancée localement, mais non sauvegardée");
       }
     });
-  }, [addLog, formatRepeatDelay, isReady, persistLoop, repeatDelays, showNotification, startLoopInstance, stopTrackLoop]);
+  }, [formatRepeatDelay, isReady, persistLoop, repeatDelays, showNotification, startLoopInstance, stopTrackLoop, syncPersistentLoops]);
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];

@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
-import { Star, Volume2, Headphones, FolderOpen, Repeat2, Clock3, X } from "lucide-react";
+import { Star, Volume2, FolderOpen, X } from "lucide-react";
 import Button from "./Button";
+import TrackActionButtons from "./TrackActionButtons";
 
 export default function FavoritesMenu({ 
   isOpen, favorites, folderFavorites, audioList, playTrack, playTrackLoop, playAudio,
@@ -85,49 +86,22 @@ export default function FavoritesMenu({
                   <Volume2 size={14} className="text-purple-400 shrink-0" />
                   <span className="truncate">{displayName}</span>
                 </div>
-                <div className="grid grid-cols-5 items-center gap-1 shrink-0">
-                  <Button
-                    icon={Volume2}
-                    size="icon"
-                    variant="ghost"
-                    onClick={(e) => { e.stopPropagation(); playTrack(file.url, displayName); }}
-                    className="h-7 w-7 justify-self-center text-white/30 hover:text-purple-300"
-                    title="Jouer pour tous"
-                  />
-                  <Button
-                    icon={Clock3}
-                    size="icon"
-                    variant="toggle"
-                    active={repeatDelay > 0}
-                    onClick={(e) => { e.stopPropagation(); openRepeatDelayEditor(file); toggleMenu(); }}
-                    className={`h-7 w-7 justify-self-center ${repeatDelay > 0 ? "text-emerald-200" : "text-white/30 hover:text-emerald-300"}`}
-                    title="Régler le délai"
-                  />
-                  <Button
-                    icon={Repeat2}
-                    size="icon"
-                    variant="toggle"
-                    active={repeatActive}
-                    onClick={(e) => { e.stopPropagation(); playTrackLoop(file.url, trackKey, displayName); }}
-                    className={`h-7 w-7 justify-self-center ${repeatActive ? "text-emerald-300" : "text-white/30 hover:text-emerald-300"}`}
-                    title={repeatActive ? "Arrêter cette boucle" : repeatDelay > 0 ? `Répéter après ${formatRepeatDelay(repeatDelay)}` : "Boucle pour tous"}
-                  />
-                  <Button
-                    icon={Headphones}
-                    size="icon"
-                    variant="ghost"
-                    onClick={(e) => { e.stopPropagation(); playAudio(file.url); }}
-                    className="h-7 w-7 justify-self-center text-white/30 hover:text-purple-400"
-                    title="Solo"
-                  />
-                  <Button
-                    icon={Star}
-                    size="icon"
-                    variant="ghost"
-                    onClick={(e) => { e.stopPropagation(); toggleFavorite(file.url); }}
-                    className="h-7 w-7 justify-self-center text-amber-400"
-                  />
-                </div>
+                <TrackActionButtons
+                  actions={["play", "delay", "repeat", "solo", "favorite"]}
+                  file={file}
+                  displayName={displayName}
+                  trackKey={trackKey}
+                  playTrack={playTrack}
+                  playTrackLoop={playTrackLoop}
+                  playAudio={playAudio}
+                  repeatDelay={repeatDelay}
+                  repeatActive={repeatActive}
+                  formatRepeatDelay={formatRepeatDelay}
+                  openRepeatDelayEditor={openRepeatDelayEditor}
+                  afterDelayClick={toggleMenu}
+                  favoriteActive
+                  toggleFavorite={toggleFavorite}
+                />
               </div>
             );
           })}

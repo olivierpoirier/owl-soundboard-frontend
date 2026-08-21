@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
-import { Clock3, Headphones, Music, Repeat2, Volume2, X } from "lucide-react";
-import Button from "./Button";
+import { Music, Repeat2, X } from "lucide-react";
+import TrackActionButtons from "./TrackActionButtons";
 
 export default function RepeatMenu({
   isOpen,
@@ -42,42 +42,20 @@ export default function RepeatMenu({
           </div>
         </div>
 
-        <div className="grid grid-cols-4 items-center gap-1">
-          <Button
-            icon={Clock3}
-            size="icon"
-            variant="toggle"
-            active={repeatDelay > 0}
-            onClick={() => { openRepeatDelayEditor(file); toggleMenu(); }}
-            className={`h-7 w-7 justify-self-center ${repeatDelay > 0 ? "text-emerald-200" : "text-white/30 hover:text-emerald-300"}`}
-            title="Régler le délai"
-          />
-          <Button
-            icon={Repeat2}
-            size="icon"
-            variant="toggle"
-            active={repeatActive}
-            onClick={() => playTrackLoop(file.url, trackKey, displayName)}
-            className={`h-7 w-7 justify-self-center ${repeatActive ? "text-emerald-300" : "text-white/30 hover:text-emerald-300"}`}
-            title={repeatActive ? "Arrêter cette boucle" : "Démarrer la répétition"}
-          />
-          <Button
-            icon={Volume2}
-            size="icon"
-            variant="ghost"
-            onClick={() => playTrack(file.url, displayName)}
-            className="h-7 w-7 justify-self-center text-white/30 hover:text-purple-300"
-            title="Jouer pour tous"
-          />
-          <Button
-            icon={Headphones}
-            size="icon"
-            variant="ghost"
-            onClick={() => playAudio(file.url)}
-            className="h-7 w-7 justify-self-center text-white/30 hover:text-purple-300"
-            title="Solo"
-          />
-        </div>
+        <TrackActionButtons
+          actions={["delay", "repeat", "play", "solo"]}
+          file={file}
+          displayName={displayName}
+          trackKey={trackKey}
+          playTrack={playTrack}
+          playTrackLoop={playTrackLoop}
+          playAudio={playAudio}
+          repeatDelay={repeatDelay}
+          repeatActive={repeatActive}
+          formatRepeatDelay={formatRepeatDelay}
+          openRepeatDelayEditor={openRepeatDelayEditor}
+          afterDelayClick={toggleMenu}
+        />
       </div>
     );
   };

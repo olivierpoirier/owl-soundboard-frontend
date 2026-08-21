@@ -1,21 +1,20 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { 
   ChevronLeft, 
   ChevronRight, 
-  Volume2, 
   Star, 
-  Headphones, 
   Music,
   Folder, 
   FolderOpen,
   ArrowLeft 
 } from "lucide-react";
 import Button from "./Button";
+import TrackActionButtons from "./TrackActionButtons";
 
 export default function AudioSelector({ 
-  audioList, playTrack, playAudio, favorites, toggleFavorite, 
+  audioList, playTrack, playTrackLoop, playAudio, favorites, toggleFavorite, 
   currentPath, changeFolder, goBack, folderFavorites, toggleFolderFavorite,
-  repeatDelays, activeLoops, formatRepeatDelay
+  repeatDelays, activeLoops, formatRepeatDelay, openRepeatDelayEditor
 }) {
   const itemsPerPage = 6;
   const [page, setPage] = useState(0);
@@ -31,8 +30,13 @@ export default function AudioSelector({
     setPage(next);
   };
 
-  if (page > maxPage && totalItems > 0) setPage(maxPage);
-  else if (totalItems === 0 && page !== 0) setPage(0);
+  useEffect(() => {
+    if (page > maxPage && totalItems > 0) {
+      setPage(maxPage);
+    } else if (totalItems === 0 && page !== 0) {
+      setPage(0);
+    }
+  }, [maxPage, page, totalItems]);
 
   const pageItems = audioList?.slice(page * itemsPerPage, (page + 1) * itemsPerPage) || [];
   const showPagination = totalItems > itemsPerPage;
@@ -95,7 +99,7 @@ export default function AudioSelector({
             <div
               key={file.path || file.url}
               onClick={() => file.isFolder ? changeFolder(file.path) : playTrack(file.url, displayName)}
-              className={`relative h-[138px] min-h-0 bg-white/[0.02] border rounded-xl p-4 flex flex-col items-center justify-center text-center transition-all duration-300 group hover:-translate-y-0.5 ${
+              className={`relative h-[150px] min-h-0 bg-white/[0.02] border rounded-xl p-4 flex flex-col items-center justify-center text-center transition-all duration-300 group hover:-translate-y-0.5 ${
                 file.isFolder
                   ? "cursor-pointer border-white/10 hover:bg-purple-500/[0.04] hover:border-purple-500/40 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)]"
                   : repeatActive
@@ -106,24 +110,26 @@ export default function AudioSelector({
             >
               {file.isFolder ? (
                 <>
-                  <Button
-                    icon={Star}
-                    size="icon"
-                    variant="ghost"
-                    active={isFav}
-                    onClick={(e) => { 
-                      e.stopPropagation(); 
-                      toggleFolderFavorite(file.path); 
-                    }}
-                    className={`absolute top-2 right-2 h-7 w-7 ${
-                      isFav ? "text-amber-400 opacity-100 [&>svg]:fill-current" : "text-white/35 opacity-70 hover:text-amber-300 hover:opacity-100"
-                    }`}
-                    title={isFav ? "Retirer des favoris" : "Ajouter aux favoris"}
-                  />
-
                   <FolderOpen size={28} className="text-amber-400/80 mb-2 group-hover:scale-110 transition-transform duration-300 group-hover:text-amber-400" />
                   <div className="text-xs font-medium text-white/70 group-hover:text-white truncate w-full max-w-[120px] transition-colors">
                     {displayName}
+                  </div>
+
+                  <div className="absolute bottom-2 left-1/2 -translate-x-1/2">
+                    <Button
+                      icon={Star}
+                      size="icon"
+                      variant="ghost"
+                      active={isFav}
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        toggleFolderFavorite(file.path); 
+                      }}
+                      className={`h-8 w-8 ${
+                        isFav ? "text-amber-400 [&>svg]:fill-current" : "text-white/35 hover:text-amber-300"
+                      }`}
+                      title={isFav ? "Retirer des favoris" : "Ajouter aux favoris"}
+                    />
                   </div>
                 </>
               ) : (
@@ -145,38 +151,23 @@ export default function AudioSelector({
                     {displayName}
                   </div>
 
-                  <div className="absolute bottom-2 left-1/2 grid w-[112px] -translate-x-1/2 grid-cols-3 items-center gap-2">
-                    <Button
-                      icon={Volume2}
-                      size="icon"
-                      variant="ghost"
-                      onClick={(e) => { e.stopPropagation(); playTrack(file.url, displayName); }}
-                      className="h-8 w-8 justify-self-center text-white/35 hover:text-purple-300"
-                      title="Jouer pour tout le monde"
-                    />
-                    <Button
-                      icon={Star}
-                      size="icon"
-                      variant="ghost"
-                      active={isFav}
-                      onClick={(e) => { 
-                        e.stopPropagation(); 
-                        toggleFavorite(file.url); 
-                      }}
-                      className={`h-8 w-8 justify-self-center ${
-                        isFav ? "text-amber-400 [&>svg]:fill-current" : "text-white/35 hover:text-amber-300"
-                      }`}
-                      title={isFav ? "Retirer des favoris" : "Ajouter aux favoris"}
-                    />
-                    <Button
-                      icon={Headphones}
-                      size="icon"
-                      variant="ghost"
-                      onClick={(e) => { e.stopPropagation(); playAudio(file.url); }}
-                      className="h-8 w-8 justify-self-center text-white/35 hover:text-purple-300"
-                      title="Écouter en solo"
-                    />
-                  </div>
+                  <TrackActionButtons
+                    actions={["play", "delay", "repeat", "favorite", "solo"]}
+                    file={file}
+                    displayName={displayName}
+                    trackKey={trackKey}
+                    playTrack={playTrack}
+                    playTrackLoop={playTrackLoop}
+                    playAudio={playAudio}
+                    repeatDelay={repeatDelay}
+                    repeatActive={repeatActive}
+                    formatRepeatDelay={formatRepeatDelay}
+                    openRepeatDelayEditor={openRepeatDelayEditor}
+                    favoriteActive={isFav}
+                    toggleFavorite={toggleFavorite}
+                    className="absolute bottom-2 left-1/2 w-[164px] -translate-x-1/2 gap-1"
+                    buttonClassName="h-8 w-8"
+                  />
                 </>
               )}
             </div>

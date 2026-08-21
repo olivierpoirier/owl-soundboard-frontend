@@ -79,6 +79,12 @@ export function useAudioPlayer(apiUrl) {
   const persistentLoopsRef = useRef({});
   const resumePersistentLoopsRef = useRef(() => {});
   const mountedRef = useRef(true);
+  const listRequestRef = useRef({
+    key: null,
+    promise: null,
+    controller: null,
+    requestId: 0,
+  });
 
   const [currentPath, setCurrentPath] = useState(ROOT_PATH);
   const [audioUrl, setAudioUrl] = useState("");
@@ -603,6 +609,7 @@ export function useAudioPlayer(apiUrl) {
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      listRequestRef.current.controller?.abort();
       obrUnsubscribesRef.current.forEach((unsubscribe) => unsubscribe?.());
       obrUnsubscribesRef.current = [];
       clearLocalSounds({ updateCount: false });
@@ -676,39 +683,83 @@ export function useAudioPlayer(apiUrl) {
     }
   }, [addLog, clearLocalSounds, playAudio, showNotification, syncPersistentLoops]);
 
-  const fetchAudioList = useCallback(async (path) => {
-    setLoading(true);
-    setDbError(false);
+  const fetchAudioList = useCallback((path, { force = false } = {}) => {
     const targetPath = path && path !== "/" ? path : ROOT_PATH;
-    setCurrentPath(targetPath);
+    const currentRequest = listRequestRef.current;
 
-    try {
-      const res = await fetch(`${apiUrl}?path=${encodeURIComponent(targetPath)}`);
-      if (!res.ok) throw new Error("Erreur serveur API");
-
-      const data = await res.json();
-      const folders = data?.filter((item) => item.isFolder) || [];
-      const files = data?.filter((item) => !item.isFolder) || [];
-
-      const fixedFiles = files.map((file) => ({
-        name: file.name,
-        url: normalizeAudioUrl(file.url),
-        isFolder: false,
-        path: file.path,
-      }));
-
-      setAudioList([...folders, ...fixedFiles]);
-      if (fixedFiles.length > 0) setAudioUrl(fixedFiles[0].url);
-    } catch (error) {
-      appError("dropbox:fetch-audio-list-failed", {
-        path: targetPath,
-        error,
-      });
-      setDbError(true);
-      setAudioList([]);
-    } finally {
-      setLoading(false);
+    if (!force && currentRequest.promise && currentRequest.key === targetPath) {
+      appLog("dropbox:reuse-audio-list-request", { path: targetPath });
+      return currentRequest.promise;
     }
+
+    currentRequest.controller?.abort();
+
+    const controller = new AbortController();
+    const requestId = currentRequest.requestId + 1;
+
+    const requestPromise = (async () => {
+      setLoading(true);
+      setDbError(false);
+      setCurrentPath(targetPath);
+
+      try {
+        const res = await fetch(`${apiUrl}?path=${encodeURIComponent(targetPath)}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error("Erreur serveur API");
+
+        const data = await res.json();
+        if (!mountedRef.current || listRequestRef.current.requestId !== requestId) return false;
+
+        const folders = data?.filter((item) => item.isFolder) || [];
+        const files = data?.filter((item) => !item.isFolder) || [];
+
+        const fixedFiles = files.map((file) => ({
+          name: file.name,
+          url: normalizeAudioUrl(file.url),
+          isFolder: false,
+          path: file.path,
+        }));
+
+        setAudioList([...folders, ...fixedFiles]);
+        setAudioUrl((currentUrl) => {
+          if (fixedFiles.some((file) => file.url === currentUrl)) return currentUrl;
+          return fixedFiles[0]?.url || "";
+        });
+        return true;
+      } catch (error) {
+        if (error?.name === "AbortError") return false;
+
+        if (mountedRef.current && listRequestRef.current.requestId === requestId) {
+          appError("dropbox:fetch-audio-list-failed", {
+            path: targetPath,
+            error,
+          });
+          setDbError(true);
+          setAudioList([]);
+        }
+        return false;
+      } finally {
+        if (listRequestRef.current.requestId === requestId) {
+          listRequestRef.current = {
+            key: targetPath,
+            promise: null,
+            controller: null,
+            requestId,
+          };
+          if (mountedRef.current) setLoading(false);
+        }
+      }
+    })();
+
+    listRequestRef.current = {
+      key: targetPath,
+      promise: requestPromise,
+      controller,
+      requestId,
+    };
+
+    return requestPromise;
   }, [apiUrl]);
 
   useEffect(() => {
@@ -850,7 +901,7 @@ export function useAudioPlayer(apiUrl) {
         const result = await response.json();
         if (result.success) {
           showNotification("✅ Son ajouté !");
-          fetchAudioList(currentPath);
+          fetchAudioList(currentPath, { force: true });
         } else {
           showNotification("❌ Échec de l'upload.");
       }
@@ -884,7 +935,7 @@ export function useAudioPlayer(apiUrl) {
 
       if (result.success) {
         showNotification("✅ Dossier ajouté !");
-        fetchAudioList(currentPath);
+        fetchAudioList(currentPath, { force: true });
         return true;
       }
 

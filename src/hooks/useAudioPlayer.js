@@ -5,7 +5,10 @@ const ROOT_PATH = "/owlbear";
 const ROOM_LOOPS_KEY = "owlbear.soundboard.activeLoops";
 const LOOP_METADATA_TIMEOUT_MS = 2500;
 const MAX_TIMER_DELAY_MS = 60 * 60 * 1000;
+const AUDIO_LIST_CACHE_TTL_MS = 45 * 1000;
+const AUDIO_LIST_STORAGE_PREFIX = "owlbear.soundboard.audioList.";
 const APP_LOG_PREFIX = "[Owl Soundboard]";
+const audioListCache = new Map();
 
 function clampDelay(seconds) {
   return Math.max(0, Math.min(24 * 60 * 60, Number(seconds) || 0));
@@ -33,6 +36,49 @@ function getLoopsSignature(loops = {}) {
 
 function normalizeAudioUrl(url) {
   return url.replace(/([?&])dl=0(&|$)/, "$1raw=1$2");
+}
+
+function getAudioListStorageKey(path) {
+  return `${AUDIO_LIST_STORAGE_PREFIX}${encodeURIComponent(path)}`;
+}
+
+function readAudioListCache(path, { allowStale = false } = {}) {
+  const now = Date.now();
+  const memoryEntry = audioListCache.get(path);
+  if (memoryEntry && (allowStale || now - memoryEntry.cachedAt < AUDIO_LIST_CACHE_TTL_MS)) {
+    return memoryEntry.items;
+  }
+
+  try {
+    const rawEntry = sessionStorage.getItem(getAudioListStorageKey(path));
+    if (!rawEntry) return null;
+
+    const entry = JSON.parse(rawEntry);
+    if (!entry?.cachedAt || !Array.isArray(entry.items)) return null;
+    audioListCache.set(path, entry);
+
+    if (allowStale || now - entry.cachedAt < AUDIO_LIST_CACHE_TTL_MS) {
+      return entry.items;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function writeAudioListCache(path, items) {
+  const entry = {
+    cachedAt: Date.now(),
+    items,
+  };
+  audioListCache.set(path, entry);
+
+  try {
+    sessionStorage.setItem(getAudioListStorageKey(path), JSON.stringify(entry));
+  } catch {
+    // Storage can be blocked in some embedded browser contexts; memory cache still helps.
+  }
 }
 
 function formatLogTime(date = new Date()) {
@@ -75,6 +121,7 @@ export function useAudioPlayer(apiUrl) {
   const mutedRef = useRef(false);
   const notificationTimeoutRef = useRef(null);
   const obrUnsubscribesRef = useRef([]);
+  const obrReadyGenerationRef = useRef(0);
   const audioUnlockedRef = useRef(false);
   const persistentLoopsRef = useRef({});
   const resumePersistentLoopsRef = useRef(() => {});
@@ -607,6 +654,8 @@ export function useAudioPlayer(apiUrl) {
   }, [showNotification, syncActiveSoundsCount]);
 
   useEffect(() => {
+    mountedRef.current = true;
+
     return () => {
       mountedRef.current = false;
       listRequestRef.current.controller?.abort();
@@ -639,9 +688,13 @@ export function useAudioPlayer(apiUrl) {
   }, [audioUnlocked, syncPersistentLoops]);
 
   useEffect(() => {
+    let cancelled = false;
+    const readyGeneration = obrReadyGenerationRef.current + 1;
+    obrReadyGenerationRef.current = readyGeneration;
+
     try {
       OBR.onReady(async () => {
-        if (!mountedRef.current) return;
+        if (cancelled || !mountedRef.current || obrReadyGenerationRef.current !== readyGeneration) return;
         setIsReady(true);
 
         const unsubscribePlay = OBR.broadcast.onMessage("mini-tracks-play", (event) => {
@@ -666,7 +719,11 @@ export function useAudioPlayer(apiUrl) {
 
         obrUnsubscribesRef.current = [unsubscribePlay, unsubscribeStop];
         const metadata = await OBR.room.getMetadata();
-        if (!mountedRef.current) return;
+        if (cancelled || !mountedRef.current || obrReadyGenerationRef.current !== readyGeneration) {
+          unsubscribePlay?.();
+          unsubscribeStop?.();
+          return;
+        }
         syncPersistentLoops(getLoopsFromMetadata(metadata), { alignToStartedAt: true });
 
         const unsubscribeMetadata = OBR.room.onMetadataChange((metadataUpdate) => {
@@ -681,11 +738,40 @@ export function useAudioPlayer(apiUrl) {
     } catch (e) {
       appWarn("obr:not-detected", e);
     }
+
+    return () => {
+      cancelled = true;
+      obrReadyGenerationRef.current += 1;
+      obrUnsubscribesRef.current.forEach((unsubscribe) => unsubscribe?.());
+      obrUnsubscribesRef.current = [];
+    };
   }, [addLog, clearLocalSounds, playAudio, showNotification, syncPersistentLoops]);
+
+  const applyAudioList = useCallback((items) => {
+    const nextItems = Array.isArray(items) ? items : [];
+    const files = nextItems.filter((item) => !item.isFolder);
+
+    setAudioList(nextItems);
+    setAudioUrl((currentUrl) => {
+      if (files.some((file) => file.url === currentUrl)) return currentUrl;
+      return files[0]?.url || "";
+    });
+  }, []);
 
   const fetchAudioList = useCallback((path, { force = false } = {}) => {
     const targetPath = path && path !== "/" ? path : ROOT_PATH;
     const currentRequest = listRequestRef.current;
+
+    const cachedItems = !force ? readAudioListCache(targetPath) : null;
+    if (cachedItems) {
+      appLog("dropbox:use-audio-list-cache", { path: targetPath, count: cachedItems.length });
+      currentRequest.controller?.abort();
+      setCurrentPath(targetPath);
+      setDbError(false);
+      setLoading(false);
+      applyAudioList(cachedItems);
+      return Promise.resolve(true);
+    }
 
     if (!force && currentRequest.promise && currentRequest.key === targetPath) {
       appLog("dropbox:reuse-audio-list-request", { path: targetPath });
@@ -703,7 +789,10 @@ export function useAudioPlayer(apiUrl) {
       setCurrentPath(targetPath);
 
       try {
-        const res = await fetch(`${apiUrl}?path=${encodeURIComponent(targetPath)}`, {
+        const params = new URLSearchParams({ path: targetPath });
+        if (force) params.set("refresh", "1");
+
+        const res = await fetch(`${apiUrl}?${params.toString()}`, {
           signal: controller.signal,
         });
         if (!res.ok) throw new Error("Erreur serveur API");
@@ -721,16 +810,26 @@ export function useAudioPlayer(apiUrl) {
           path: file.path,
         }));
 
-        setAudioList([...folders, ...fixedFiles]);
-        setAudioUrl((currentUrl) => {
-          if (fixedFiles.some((file) => file.url === currentUrl)) return currentUrl;
-          return fixedFiles[0]?.url || "";
-        });
+        const nextItems = [...folders, ...fixedFiles];
+        writeAudioListCache(targetPath, nextItems);
+        applyAudioList(nextItems);
         return true;
       } catch (error) {
         if (error?.name === "AbortError") return false;
 
         if (mountedRef.current && listRequestRef.current.requestId === requestId) {
+          const staleItems = readAudioListCache(targetPath, { allowStale: true });
+          if (staleItems) {
+            appWarn("dropbox:fetch-audio-list-failed-using-cache", {
+              path: targetPath,
+              error,
+            });
+            setDbError(false);
+            applyAudioList(staleItems);
+            showNotification("⚠️ Liste audio temporairement servie depuis le cache");
+            return true;
+          }
+
           appError("dropbox:fetch-audio-list-failed", {
             path: targetPath,
             error,
@@ -760,7 +859,7 @@ export function useAudioPlayer(apiUrl) {
     };
 
     return requestPromise;
-  }, [apiUrl]);
+  }, [apiUrl, applyAudioList, showNotification]);
 
   useEffect(() => {
     fetchAudioList(ROOT_PATH);

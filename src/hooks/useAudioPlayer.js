@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import OBR from "@owlbear-rodeo/sdk";
 
-const ROOT_PATH = "/owlbear";
+const ROOT_PATH = "/";
+const FALLBACK_ROOM_ID = "standalone";
 const ROOM_LOOPS_KEY = "owlbear.soundboard.activeLoops";
 const LOOP_METADATA_TIMEOUT_MS = 2500;
 const MAX_TIMER_DELAY_MS = 60 * 60 * 1000;
 const AUDIO_LIST_CACHE_TTL_MS = 45 * 1000;
 const AUDIO_LIST_STORAGE_PREFIX = "owlbear.soundboard.audioList.";
 const APP_LOG_PREFIX = "[Owl Soundboard]";
+const SUPPORTED_AUDIO_EXTENSIONS = ["mp3", "wav", "ogg", "opus", "m4a", "aac", "flac", "webm"];
 const audioListCache = new Map();
 
 function clampDelay(seconds) {
@@ -38,24 +40,28 @@ function normalizeAudioUrl(url) {
   return url.replace(/([?&])dl=0(&|$)/, "$1raw=1$2");
 }
 
-function getAudioListStorageKey(path) {
-  return `${AUDIO_LIST_STORAGE_PREFIX}${encodeURIComponent(path)}`;
+function getAudioListCacheKey(roomId, path) {
+  return `${roomId || FALLBACK_ROOM_ID}:${path || ROOT_PATH}`;
 }
 
-function readAudioListCache(path, { allowStale = false } = {}) {
+function getAudioListStorageKey(cacheKey) {
+  return `${AUDIO_LIST_STORAGE_PREFIX}${encodeURIComponent(cacheKey)}`;
+}
+
+function readAudioListCache(cacheKey, { allowStale = false } = {}) {
   const now = Date.now();
-  const memoryEntry = audioListCache.get(path);
+  const memoryEntry = audioListCache.get(cacheKey);
   if (memoryEntry && (allowStale || now - memoryEntry.cachedAt < AUDIO_LIST_CACHE_TTL_MS)) {
     return memoryEntry.items;
   }
 
   try {
-    const rawEntry = sessionStorage.getItem(getAudioListStorageKey(path));
+    const rawEntry = sessionStorage.getItem(getAudioListStorageKey(cacheKey));
     if (!rawEntry) return null;
 
     const entry = JSON.parse(rawEntry);
     if (!entry?.cachedAt || !Array.isArray(entry.items)) return null;
-    audioListCache.set(path, entry);
+    audioListCache.set(cacheKey, entry);
 
     if (allowStale || now - entry.cachedAt < AUDIO_LIST_CACHE_TTL_MS) {
       return entry.items;
@@ -67,18 +73,58 @@ function readAudioListCache(path, { allowStale = false } = {}) {
   return null;
 }
 
-function writeAudioListCache(path, items) {
+function writeAudioListCache(cacheKey, items) {
   const entry = {
     cachedAt: Date.now(),
     items,
   };
-  audioListCache.set(path, entry);
+  audioListCache.set(cacheKey, entry);
 
   try {
-    sessionStorage.setItem(getAudioListStorageKey(path), JSON.stringify(entry));
+    sessionStorage.setItem(getAudioListStorageKey(cacheKey), JSON.stringify(entry));
   } catch {
     // Storage can be blocked in some embedded browser contexts; memory cache still helps.
   }
+}
+
+function getFileExtension(name = "") {
+  return name.split(".").pop()?.toLowerCase() || "";
+}
+
+function isSupportedAudioFile(file) {
+  return SUPPORTED_AUDIO_EXTENSIONS.includes(getFileExtension(file?.name));
+}
+
+function getAudioContentType(file) {
+  if (file?.type?.startsWith("audio/")) return file.type;
+  const fallbackTypes = {
+    mp3: "audio/mpeg",
+    wav: "audio/wav",
+    ogg: "audio/ogg",
+    opus: "audio/ogg",
+    m4a: "audio/mp4",
+    aac: "audio/aac",
+    flac: "audio/flac",
+    webm: "audio/webm",
+  };
+  return fallbackTypes[getFileExtension(file?.name)] || "audio/mpeg";
+}
+
+function formatBytes(bytes = 0) {
+  const value = Number(bytes) || 0;
+  if (value >= 1024 * 1024 * 1024) return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  if (value >= 1024) return `${Math.round(value / 1024)} KB`;
+  return `${value} B`;
+}
+
+async function hashFile(file) {
+  if (!window.crypto?.subtle) return "";
+  const buffer = await file.arrayBuffer();
+  const digest = await window.crypto.subtle.digest("SHA-256", buffer);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function formatLogTime(date = new Date()) {
@@ -134,12 +180,18 @@ export function useAudioPlayer(apiUrl) {
   });
 
   const [currentPath, setCurrentPath] = useState(ROOT_PATH);
+  const [roomId, setRoomId] = useState(() => (window.self === window.top ? FALLBACK_ROOM_ID : null));
+  const [playerId, setPlayerId] = useState(FALLBACK_ROOM_ID);
+  const [playerRole, setPlayerRole] = useState("PLAYER");
   const [audioUrl, setAudioUrl] = useState("");
   const [audioList, setAudioList] = useState([]);
+  const [quota, setQuota] = useState(null);
   const [notification, setNotification] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [deletingPath, setDeletingPath] = useState(null);
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [dbError, setDbError] = useState(false);
   const [activeSoundsCount, setActiveSoundsCount] = useState(0);
   const [isReady, setIsReady] = useState(false);
@@ -696,6 +748,11 @@ export function useAudioPlayer(apiUrl) {
       OBR.onReady(async () => {
         if (cancelled || !mountedRef.current || obrReadyGenerationRef.current !== readyGeneration) return;
         setIsReady(true);
+        setRoomId(OBR.room.id || FALLBACK_ROOM_ID);
+        setPlayerId(OBR.player.id || FALLBACK_ROOM_ID);
+        OBR.player.getRole()
+          .then((role) => setPlayerRole(role || "PLAYER"))
+          .catch(() => setPlayerRole("PLAYER"));
 
         const unsubscribePlay = OBR.broadcast.onMessage("mini-tracks-play", (event) => {
           const { url, senderName } = event.data || {};
@@ -759,12 +816,18 @@ export function useAudioPlayer(apiUrl) {
   }, []);
 
   const fetchAudioList = useCallback((path, { force = false } = {}) => {
+    if (!roomId) {
+      setLoading(true);
+      return Promise.resolve(false);
+    }
+
     const targetPath = path && path !== "/" ? path : ROOT_PATH;
+    const requestKey = getAudioListCacheKey(roomId, targetPath);
     const currentRequest = listRequestRef.current;
 
-    const cachedItems = !force ? readAudioListCache(targetPath) : null;
+    const cachedItems = !force ? readAudioListCache(requestKey) : null;
     if (cachedItems) {
-      appLog("dropbox:use-audio-list-cache", { path: targetPath, count: cachedItems.length });
+      appLog("storage:use-audio-list-cache", { roomId, path: targetPath, count: cachedItems.length });
       currentRequest.controller?.abort();
       setCurrentPath(targetPath);
       setDbError(false);
@@ -773,8 +836,8 @@ export function useAudioPlayer(apiUrl) {
       return Promise.resolve(true);
     }
 
-    if (!force && currentRequest.promise && currentRequest.key === targetPath) {
-      appLog("dropbox:reuse-audio-list-request", { path: targetPath });
+    if (!force && currentRequest.promise && currentRequest.key === requestKey) {
+      appLog("storage:reuse-audio-list-request", { roomId, path: targetPath });
       return currentRequest.promise;
     }
 
@@ -790,6 +853,7 @@ export function useAudioPlayer(apiUrl) {
 
       try {
         const params = new URLSearchParams({ path: targetPath });
+        params.set("roomId", roomId);
         if (force) params.set("refresh", "1");
 
         const res = await fetch(`${apiUrl}?${params.toString()}`, {
@@ -797,30 +861,39 @@ export function useAudioPlayer(apiUrl) {
         });
         if (!res.ok) throw new Error("Erreur serveur API");
 
-        const data = await res.json();
+        const payload = await res.json();
         if (!mountedRef.current || listRequestRef.current.requestId !== requestId) return false;
 
-        const folders = data?.filter((item) => item.isFolder) || [];
-        const files = data?.filter((item) => !item.isFolder) || [];
+        if (payload?.quota) {
+          setQuota(payload.quota);
+        }
+
+        const entries = Array.isArray(payload) ? payload : payload?.items;
+        const folders = entries?.filter((item) => item.isFolder) || [];
+        const files = entries?.filter((item) => !item.isFolder) || [];
 
         const fixedFiles = files.map((file) => ({
+          id: file.id || `${roomId}:${file.path || file.url}`,
           name: file.name,
           url: normalizeAudioUrl(file.url),
           isFolder: false,
           path: file.path,
+          size: file.size,
+          updatedAt: file.updatedAt,
         }));
 
         const nextItems = [...folders, ...fixedFiles];
-        writeAudioListCache(targetPath, nextItems);
+        writeAudioListCache(requestKey, nextItems);
         applyAudioList(nextItems);
         return true;
       } catch (error) {
         if (error?.name === "AbortError") return false;
 
         if (mountedRef.current && listRequestRef.current.requestId === requestId) {
-          const staleItems = readAudioListCache(targetPath, { allowStale: true });
+          const staleItems = readAudioListCache(requestKey, { allowStale: true });
           if (staleItems) {
-            appWarn("dropbox:fetch-audio-list-failed-using-cache", {
+            appWarn("storage:fetch-audio-list-failed-using-cache", {
+              roomId,
               path: targetPath,
               error,
             });
@@ -830,7 +903,8 @@ export function useAudioPlayer(apiUrl) {
             return true;
           }
 
-          appError("dropbox:fetch-audio-list-failed", {
+          appError("storage:fetch-audio-list-failed", {
+            roomId,
             path: targetPath,
             error,
           });
@@ -852,18 +926,19 @@ export function useAudioPlayer(apiUrl) {
     })();
 
     listRequestRef.current = {
-      key: targetPath,
+      key: requestKey,
       promise: requestPromise,
       controller,
       requestId,
     };
 
     return requestPromise;
-  }, [apiUrl, applyAudioList, showNotification]);
+  }, [apiUrl, applyAudioList, roomId, showNotification]);
 
   useEffect(() => {
+    if (!roomId) return;
     fetchAudioList(ROOT_PATH);
-  }, [fetchAudioList]);
+  }, [fetchAudioList, roomId]);
 
   const playTrack = useCallback((url, name = "son") => {
     if (!isReady) {
@@ -974,50 +1049,127 @@ export function useAudioPlayer(apiUrl) {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (!file.name.endsWith(".mp3") && !file.name.endsWith(".wav")) {
-      showNotification("⚠️ Format invalide (.mp3 ou .wav uniquement)");
+    if (!roomId) {
+      showNotification("⚠️ Room Owlbear non détectée");
+      e.target.value = "";
       return;
     }
 
-    if (file.size > 3.1 * 1024 * 1024) {
-      showNotification("⚠️ Fichier trop lourd (Max ~3 Mo à cause des limites Vercel)");
+    if (!rightsConfirmed) {
+      showNotification("⚠️ Confirmez les droits du fichier avant l'upload");
+      e.target.value = "";
+      return;
+    }
+
+    if (!isSupportedAudioFile(file)) {
+      showNotification("⚠️ Format invalide (mp3, wav, ogg, m4a, flac, webm)");
+      e.target.value = "";
+      return;
+    }
+
+    if (quota?.limits?.maxUploadBytes && file.size > quota.limits.maxUploadBytes) {
+      showNotification(`⚠️ Fichier trop lourd (max ${formatBytes(quota.limits.maxUploadBytes)})`);
+      e.target.value = "";
+      return;
+    }
+
+    if (quota && (quota.remainingFiles <= 0 || file.size > quota.remainingBytes)) {
+      showNotification("⚠️ Quota de la room atteint");
+      e.target.value = "";
       return;
     }
 
     setIsUploading(true);
-    showNotification("⏳ Téléversement sur Dropbox...");
+    showNotification("⏳ Préparation de l'upload...");
 
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onloadend = async () => {
-      const base64Data = reader.result.split(",")[1];
-      try {
-        const response = await fetch(apiUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: file.name, fileData: base64Data, path: currentPath }),
-        });
-        const result = await response.json();
-        if (result.success) {
-          showNotification("✅ Son ajouté !");
-          fetchAudioList(currentPath, { force: true });
-        } else {
-          showNotification("❌ Échec de l'upload.");
+    try {
+      const contentType = getAudioContentType(file);
+      const sha256 = await hashFile(file).catch((error) => {
+        appWarn("storage:file-hash-failed", error);
+        return "";
+      });
+
+      const prepareResponse = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "prepare_upload",
+          roomId,
+          uploaderId: playerId,
+          uploaderRole: playerRole,
+          path: currentPath,
+          name: file.name,
+          size: file.size,
+          type: contentType,
+          sha256,
+          rightsConfirmed,
+        }),
+      });
+
+      const prepareResult = await prepareResponse.json().catch(() => ({}));
+      if (prepareResult.quota) setQuota(prepareResult.quota);
+
+      if (!prepareResponse.ok || !prepareResult?.upload?.url) {
+        throw new Error(prepareResult?.error || "Upload refusé par le serveur");
       }
+
+      showNotification("⏳ Envoi du fichier...");
+      const uploadResponse = await fetch(prepareResult.upload.url, {
+        method: prepareResult.upload.method || "PUT",
+        headers: prepareResult.upload.headers || { "Content-Type": contentType },
+        body: file,
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error("Upload R2 refusé. Vérifiez le CORS du bucket.");
+      }
+
+      const completeResponse = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "complete_upload",
+          roomId,
+          uploaderId: playerId,
+          uploaderRole: playerRole,
+          path: prepareResult.upload.path,
+          key: prepareResult.upload.key,
+          name: file.name,
+          size: file.size,
+          type: contentType,
+          sha256,
+        }),
+      });
+
+      const completeResult = await completeResponse.json().catch(() => ({}));
+      if (completeResult.quota) setQuota(completeResult.quota);
+
+      if (!completeResponse.ok) {
+        appWarn("storage:complete-upload-failed", completeResult);
+        showNotification("⚠️ Son ajouté, audit incomplet");
+      } else {
+        showNotification("✅ Son ajouté !");
+      }
+
+      fetchAudioList(currentPath, { force: true });
     } catch (err) {
-      appError("dropbox:upload-failed", err);
-      showNotification("❌ Erreur serveur.");
+      appError("storage:upload-failed", err);
+      showNotification(err?.message || "❌ Erreur d'upload.");
     } finally {
-        setIsUploading(false);
-        e.target.value = "";
-      }
-    };
+      setIsUploading(false);
+      e.target.value = "";
+    }
   };
 
   const handleCreateFolder = async (folderName) => {
     const trimmedName = folderName?.trim();
     if (!trimmedName) {
       showNotification("⚠️ Nom de dossier requis");
+      return false;
+    }
+
+    if (!roomId) {
+      showNotification("⚠️ Room Owlbear non détectée");
       return false;
     }
 
@@ -1028,9 +1180,17 @@ export function useAudioPlayer(apiUrl) {
       const response = await fetch(apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "create_folder", name: trimmedName, path: currentPath }),
+        body: JSON.stringify({
+          action: "create_folder",
+          roomId,
+          uploaderId: playerId,
+          uploaderRole: playerRole,
+          name: trimmedName,
+          path: currentPath,
+        }),
       });
       const result = await response.json();
+      if (result.quota) setQuota(result.quota);
 
       if (result.success) {
         showNotification("✅ Dossier ajouté !");
@@ -1041,11 +1201,66 @@ export function useAudioPlayer(apiUrl) {
       showNotification(response.status === 409 ? "⚠️ Ce dossier existe déjà" : "❌ Échec de la création.");
       return false;
     } catch (err) {
-      appError("dropbox:create-folder-failed", err);
+      appError("storage:create-folder-failed", err);
       showNotification("❌ Erreur serveur.");
       return false;
     } finally {
       setIsCreatingFolder(false);
+    }
+  };
+
+  const handleDeleteTrack = async (file) => {
+    if (!file || file.isFolder || !file.path) return false;
+
+    if (!roomId) {
+      showNotification("⚠️ Room Owlbear non détectée");
+      return false;
+    }
+
+    const displayName = file.name?.replace(/\.(mp3|wav|ogg|opus|m4a|aac|flac|webm)$/i, "") || "ce son";
+    const confirmed = window.confirm(`Supprimer "${displayName}" de cette room ?`);
+    if (!confirmed) return false;
+
+    const trackKey = file.id || file.path || file.url;
+    setDeletingPath(file.path);
+    showNotification("⏳ Suppression du son...");
+
+    try {
+      const params = new URLSearchParams({ roomId, path: file.path });
+      const response = await fetch(`${apiUrl}?${params.toString()}`, { method: "DELETE" });
+      const result = await response.json().catch(() => ({}));
+      if (result.quota) setQuota(result.quota);
+
+      if (!response.ok) {
+        throw new Error(result?.error || "Suppression refusée");
+      }
+
+      if (persistentLoopsRef.current?.[trackKey]) {
+        stopTrackLoop(trackKey, displayName);
+      }
+
+      setAudioList((items) => items.filter((item) => item.path !== file.path));
+      setFavorites((current) => {
+        const updated = (current || []).filter((favorite) => favorite !== file.url);
+        localStorage.setItem("owlbear_favorites", JSON.stringify(updated));
+        return updated;
+      });
+      setRepeatDelays((current) => {
+        const updated = { ...(current || {}) };
+        delete updated[trackKey];
+        localStorage.setItem("owlbear_repeat_delays", JSON.stringify(updated));
+        return updated;
+      });
+
+      showNotification("✅ Son supprimé");
+      fetchAudioList(currentPath, { force: true });
+      return true;
+    } catch (error) {
+      appError("storage:delete-track-failed", error);
+      showNotification(error?.message || "❌ Suppression impossible");
+      return false;
+    } finally {
+      setDeletingPath(null);
     }
   };
 
@@ -1161,10 +1376,14 @@ export function useAudioPlayer(apiUrl) {
 
   return {
     currentPath,
+    roomId,
+    playerId,
+    playerRole,
     folderFavorites,
     audioUrl,
     setAudioUrl,
     audioList,
+    quota,
     favorites,
     repeatDelays,
     activeLoops,
@@ -1174,6 +1393,9 @@ export function useAudioPlayer(apiUrl) {
     loading,
     isUploading,
     isCreatingFolder,
+    deletingPath,
+    rightsConfirmed,
+    setRightsConfirmed,
     dbError,
     volume,
     isMuted,
@@ -1188,6 +1410,7 @@ export function useAudioPlayer(apiUrl) {
     playAudio,
     handleFileUpload,
     handleCreateFolder,
+    handleDeleteTrack,
     handleVolumeChange,
     toggleMute,
     stopAllSounds,

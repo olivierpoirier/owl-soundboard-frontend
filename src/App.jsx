@@ -13,6 +13,14 @@ import TerminalLog from "./components/TerminalLog";
 import Button from "./components/Button";
 import { Upload, Loader2, Info, FolderPlus, Check, X, Clock3, RotateCcw, Volume2 } from "lucide-react";
 
+function formatBytes(bytes = 0) {
+  const value = Number(bytes) || 0;
+  if (value >= 1024 * 1024 * 1024) return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  if (value >= 1024) return `${Math.round(value / 1024)} KB`;
+  return `${value} B`;
+}
+
 export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [repeatMenuOpen, setRepeatMenuOpen] = useState(false);
@@ -24,8 +32,13 @@ export default function App() {
   const [repeatMinutes, setRepeatMinutes] = useState(0);
   const [repeatSeconds, setRepeatSeconds] = useState(0);
   
-  const apiUrl = "https://owl-soundboard-backend.vercel.app/api/dropbox-files";
+  const apiUrl = import.meta.env.VITE_SOUND_API_URL || "https://owl-soundboard-backend.vercel.app/api/sounds";
   const player = useAudioPlayer(apiUrl);
+  const quota = player.quota;
+  const quotaPercent = quota?.limits?.storageBytes
+    ? Math.min(100, Math.round((quota.usedBytes / quota.limits.storageBytes) * 100))
+    : 0;
+  const quotaFull = Boolean(quota?.isFull || quota?.remainingFiles <= 0 || quota?.remainingBytes <= 0);
 
   // Détecter si l'application est ouverte dans une iframe (Owlbear Rodeo) ou seule
   useEffect(() => {
@@ -46,7 +59,7 @@ export default function App() {
   };
 
   const openRepeatDelayEditor = (track) => {
-    const trackKey = track?.path || track?.url;
+    const trackKey = track?.id || track?.path || track?.url;
     if (!trackKey) return;
     const savedDelay = Number(player.repeatDelays?.[trackKey]) || 0;
     setRepeatEditorTrack({ ...track, key: trackKey });
@@ -166,28 +179,70 @@ export default function App() {
             
             {player.dbError && (
               <p className="w-full max-w-[380px] text-center text-xs text-red-300 font-medium bg-red-950/40 px-3 py-2 rounded-xl border border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.1)]">
-                ⚠️ Synchronisation Dropbox interrompue (En attente du déploiement backend).
+                ⚠️ Synchronisation des sons interrompue.
               </p>
             )}
 
+            {quota && (
+              <div className="w-full max-w-[380px] rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
+                <div className="flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-wider text-white/40">
+                  <span>Quota room</span>
+                  <span className={quotaFull ? "text-red-300" : "text-white/45"}>
+                    {formatBytes(quota.usedBytes)} / {formatBytes(quota.limits.storageBytes)}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className={`h-full rounded-full transition-all ${quotaFull ? "bg-red-400" : "bg-emerald-400"}`}
+                    style={{ width: `${quotaPercent}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3 text-[10px] text-white/35">
+                  <span>{quota.fileCount} / {quota.limits.maxFiles} fichiers</span>
+                  <span>Max {formatBytes(quota.limits.maxUploadBytes)} par fichier</span>
+                </div>
+              </div>
+            )}
+
+            <label className="w-full max-w-[380px] flex items-start gap-2 rounded-xl border border-amber-400/20 bg-amber-400/[0.04] px-3 py-2 text-[11px] leading-snug text-amber-100/75">
+              <input
+                type="checkbox"
+                checked={player.rightsConfirmed}
+                onChange={(event) => player.setRightsConfirmed(event.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-amber-300"
+              />
+              <span>Je confirme avoir les droits nécessaires pour utiliser le fichier audio dans cette room.</span>
+            </label>
+
             {/* Zone de Téléversement Stylisée */}
-            <label className="w-full max-w-[380px] h-11 flex items-center justify-center gap-2 border border-white/10 hover:border-purple-500/40 bg-white/[0.03] hover:bg-purple-500/[0.06] rounded-xl cursor-pointer group transition-all duration-300 hover:shadow-[0_0_20px_rgba(168,85,247,0.15)]">
+            <label className={`w-full max-w-[380px] h-11 flex items-center justify-center gap-2 border rounded-xl cursor-pointer group transition-all duration-300 ${
+              quotaFull
+                ? "border-red-400/25 bg-red-400/[0.04] hover:border-red-400/40"
+                : "border-white/10 hover:border-purple-500/40 bg-white/[0.03] hover:bg-purple-500/[0.06] hover:shadow-[0_0_20px_rgba(168,85,247,0.15)]"
+            }`}>
               {player.isUploading ? (
                 <>
                   <Loader2 className="animate-spin text-purple-400" size={16} />
                   <span className="text-xs font-semibold text-purple-300">Téléversement en cours...</span>
                 </>
+              ) : quotaFull ? (
+                <>
+                  <Upload className="text-red-300/70" size={15} />
+                  <span className="text-xs font-medium text-red-200/80">
+                    Quota atteint
+                  </span>
+                </>
               ) : (
                 <>
                   <Upload className="text-white/40 group-hover:text-purple-400 group-hover:scale-110 transition-all" size={15} />
                   <span className="text-xs font-medium text-white/60 group-hover:text-white transition-colors">
-                    Ajouter un fichier audio (.mp3, .wav)
+                    Ajouter un fichier audio
                   </span>
                 </>
               )}
               <input 
                 type="file" 
-                accept="audio/mp3, audio/wav, audio/mpeg" 
+                accept="audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/aac,audio/flac,audio/webm,.mp3,.wav,.ogg,.opus,.m4a,.aac,.flac,.webm" 
                 className="hidden" 
                 onChange={player.handleFileUpload} 
                 disabled={player.isUploading}
@@ -327,6 +382,8 @@ export default function App() {
               goBack={player.goBack}
               folderFavorites={player.folderFavorites}
               toggleFolderFavorite={player.toggleFolderFavorite}
+              handleDeleteTrack={player.handleDeleteTrack}
+              deletingPath={player.deletingPath}
             />
   
             {/* Contrôles du Volume & Mute */}

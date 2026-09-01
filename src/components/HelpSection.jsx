@@ -31,7 +31,7 @@ export default function HelpSection({ helpOpen, setHelpOpen }) {
               <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Les boucles actives sont restaurées automatiquement pour les joueurs qui rejoignent la salle plus tard.</p>
               <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Icône <span className="text-purple-300">Headphones</span> : Pré-écoute locale exclusive (idéal pour la préparation du MJ).</p>
               <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Icône <span className="text-amber-400">Star</span> : Indexation du son ou dossier associé dans le panneau des favoris.</p>
-              <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Ajouter un dossier : Crée un sous-dossier Dropbox dans le chemin affiché.</p>
+              <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Ajouter un dossier : Crée un sous-dossier dans la bibliothèque de cette room.</p>
               <p className="flex items-start gap-2"><span className="text-purple-400 font-bold">▪</span> Molette de Volume : Ajustement du gain de sortie local (sans incidence sur l'auditoire).</p>
             </div>
           </motion.div>

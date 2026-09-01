@@ -68,10 +68,10 @@ export default function FavoritesMenu({
         )}
         <div className="flex flex-col gap-2">
           {favoriteFiles.map((file) => {
-            const trackKey = file.path || file.url;
+            const trackKey = file.id || file.path || file.url;
             const repeatDelay = Number(repeatDelays?.[trackKey]) || 0;
             const repeatActive = Boolean(activeLoops?.[trackKey]);
-            const displayName = file.name.replace(/\.(mp3|wav)$/i, "");
+            const displayName = file.name.replace(/\.(mp3|wav|ogg|opus|m4a|aac|flac|webm)$/i, "");
 
             return (
               <div

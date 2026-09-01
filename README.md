@@ -29,15 +29,18 @@
   <img src="src/assets/readme/soundboard-overview.png" alt="Owl Soundboard dans Owlbear Rodeo" width="900" />
 </p>
 
-Owl Soundboard s'intègre directement dans une salle Owlbear Rodeo sous forme de popover compact. Le MJ peut parcourir ses dossiers audio, jouer un son pour la table, pré-écouter une piste localement, marquer ses favoris et arrêter tous les sons actifs depuis une interface sombre et lisible.
+Owl Soundboard s'intègre directement dans une salle Owlbear Rodeo sous forme de popover compact. Chaque room possède sa propre bibliothèque audio distante, avec quotas, upload direct, pré-écoute locale, favoris et arrêt global des sons actifs.
 
 ## Fonctionnalités
 
 - **Lecture synchronisée dans Owlbear Rodeo** : un son déclenché par un utilisateur est diffusé aux autres participants via le SDK Owlbear.
 - **Pré-écoute locale** : l'icône casque permet au MJ de tester un son sans le diffuser à la table.
-- **Navigation par dossiers** : la bibliothèque audio conserve la structure Dropbox exposée par le backend.
+- **Bibliothèque par room** : les sons sont isolés avec `OBR.room.id`.
+- **Navigation par dossiers** : la bibliothèque audio conserve une structure de dossiers virtuelle dans la room.
 - **Favoris rapides** : sons et dossiers peuvent être épinglés dans un panneau latéral.
-- **Upload intégré** : ajout direct de fichiers `.mp3` et `.wav` depuis l'interface.
+- **Upload intégré** : ajout direct de fichiers audio via une URL signée vers Cloudflare R2.
+- **Quotas visibles** : l'interface affiche l'espace utilisé, le nombre de fichiers et la taille max par fichier.
+- **Suppression ciblée** : un son peut être supprimé sans effacer toute la room.
 - **Contrôle local du volume** : mute, volume et arrêt global des sons actifs.
 - **Mode standalone clair** : lorsqu'elle est ouverte hors Owlbear, l'app affiche un rappel d'intégration.
 
@@ -51,13 +54,13 @@ Owl Soundboard s'intègre directement dans une salle Owlbear Rodeo sous forme de
 
 ```mermaid
 flowchart LR
-  Dropbox["Dropbox<br/>Bibliothèque audio"] --> Backend["Backend serverless<br/>API Dropbox sécurisée"]
-  Backend --> Frontend["Frontend React<br/>Owl Soundboard"]
+  Frontend["Frontend React<br/>Owl Soundboard"] --> Backend["Backend serverless<br/>/api/sounds"]
+  Backend --> R2["Cloudflare R2<br/>rooms/{roomId}"]
   Frontend --> Owlbear["Owlbear Rodeo<br/>Extension popover"]
   Owlbear --> Players["Joueurs<br/>Lecture synchronisée"]
 ```
 
-Le projet de ce dépôt contient uniquement le **frontend**. Les appels Dropbox passent par un backend proxifié afin d'éviter d'exposer les clés ou tokens Dropbox dans le navigateur.
+Les fichiers audio ne sont pas stockés dans Owlbear. L'app utilise le SDK Owlbear pour synchroniser la lecture et le backend pour stocker les fichiers dans R2 par room.
 
 ## Stack
 
@@ -68,13 +71,14 @@ Le projet de ce dépôt contient uniquement le **frontend**. Les appels Dropbox 
 - Lucide React
 - `@owlbear-rodeo/sdk`
 - Vercel pour l'hébergement statique et les headers du manifest
+- Cloudflare R2 côté backend pour les fichiers audio
 
 ## Démarrage local
 
 ### Prérequis
 
 - Node.js 18 ou plus récent
-- Un backend compatible avec l'endpoint Dropbox attendu par l'app
+- Un backend compatible avec `/api/sounds`
 
 ### Installation
 
@@ -107,13 +111,25 @@ npm run preview
 Le frontend pointe actuellement vers :
 
 ```txt
-https://owl-soundboard-backend.vercel.app/api/dropbox-files
+https://owl-soundboard-backend.vercel.app/api/sounds
 ```
+
+Tu peux remplacer cette URL avec une variable Vite :
+
+```env
+VITE_SOUND_API_URL=http://localhost:3000/api/sounds
+```
+
+Copie `.env.example` vers `.env.local` en developpement si tu veux pointer le
+frontend vers ton backend local.
 
 L'API doit accepter :
 
-- `GET ?path=/owlbear` pour lister les dossiers et fichiers audio.
-- `POST` avec un fichier encodé en Base64 pour téléverser un nouveau son.
+- `GET ?roomId=...&path=/` pour lister les dossiers et fichiers audio.
+- `POST action=prepare_upload` pour recevoir une URL d'upload signée.
+- `POST action=complete_upload` pour confirmer l'upload et sauvegarder l'audit.
+- `POST action=create_folder` pour créer un dossier virtuel.
+- `DELETE ?roomId=...&path=/file.mp3` pour supprimer un son précis.
 
 Format attendu côté frontend pour la liste :
 
@@ -122,12 +138,12 @@ Format attendu côté frontend pour la liste :
   {
     "name": "Ambiance forêt.mp3",
     "url": "https://...",
-    "path": "/owlbear/ambiences/Ambiance forêt.mp3",
+    "path": "/ambiences/Ambiance forêt.mp3",
     "isFolder": false
   },
   {
     "name": "Combats",
-    "path": "/owlbear/combats",
+    "path": "/combats",
     "isFolder": true
   }
 ]
@@ -145,8 +161,9 @@ Le fichier `vercel.json` ajoute les headers CORS nécessaires pour que le manife
 
 ## Limites connues
 
-- Les uploads sont limités à environ **3.1 Mo** par fichier, car l'encodage Base64 ajoute du poids avant l'envoi au backend serverless.
-- Les formats acceptés par l'interface sont `.mp3`, `.wav` et `.mpeg`.
+- Les quotas sont imposés côté backend par room.
+- Les formats acceptés par l'interface sont `.mp3`, `.wav`, `.ogg`, `.opus`, `.m4a`, `.aac`, `.flac` et `.webm`.
+- L'utilisateur doit confirmer qu'il possède les droits nécessaires avant l'upload.
 - Hors Owlbear Rodeo, la lecture reste possible localement, mais la diffusion synchronisée dépend de l'environnement Owlbear.
 
 ## Structure

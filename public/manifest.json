@@ -10,6 +10,12 @@
       "popover": "/",
       "height": 650,
       "width": 425
-    }
+    },
+    "permissions": [
+      {
+        "name": "autoplay",
+        "reason": "Play synchronized room audio after the user enables audio in the extension."
+      }
+    ]
 }
   

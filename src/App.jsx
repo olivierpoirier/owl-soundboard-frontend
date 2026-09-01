@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAudioPlayer } from "./hooks/useAudioPlayer";
 import Notification from "./components/Notification";
 import Header from "./components/Header";
@@ -10,6 +10,7 @@ import StarToggle from "./components/StarToggle";
 import RepeatMenu from "./components/RepeatMenu";
 import RepeatToggle from "./components/RepeatToggle";
 import TerminalLog from "./components/TerminalLog";
+import TurnstileWidget from "./components/TurnstileWidget";
 import Button from "./components/Button";
 import { Upload, Loader2, Info, FolderPlus, Check, X, Clock3, RotateCcw, Volume2 } from "lucide-react";
 
@@ -31,14 +32,27 @@ export default function App() {
   const [repeatEditorTrack, setRepeatEditorTrack] = useState(null);
   const [repeatMinutes, setRepeatMinutes] = useState(0);
   const [repeatSeconds, setRepeatSeconds] = useState(0);
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
   
   const apiUrl = import.meta.env.VITE_SOUND_API_URL || "https://owl-soundboard-backend.vercel.app/api/sounds";
-  const player = useAudioPlayer(apiUrl);
+  const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || "";
+  const handleTurnstileToken = useCallback((token) => setTurnstileToken(token || ""), []);
+  const resetTurnstile = useCallback(() => setTurnstileResetKey((value) => value + 1), []);
+  const player = useAudioPlayer(apiUrl, {
+    turnstileToken,
+    turnstileEnabled: Boolean(turnstileSiteKey),
+    resetTurnstile,
+  });
   const quota = player.quota;
   const quotaPercent = quota?.limits?.storageBytes
     ? Math.min(100, Math.round((quota.usedBytes / quota.limits.storageBytes) * 100))
     : 0;
-  const quotaFull = Boolean(quota?.isFull || quota?.remainingFiles <= 0 || quota?.remainingBytes <= 0);
+  const uploadsPaused = player.service?.uploadsEnabled === false;
+  const challengeRequired = Boolean(turnstileSiteKey || player.service?.turnstileRequired);
+  const challengeReady = !challengeRequired || Boolean(turnstileToken);
+  const securityMisconfigured = Boolean(player.service?.turnstileRequired && !turnstileSiteKey);
+  const quotaFull = Boolean(uploadsPaused || quota?.isFull || quota?.remainingFiles <= 0 || quota?.remainingBytes <= 0);
 
   // Détecter si l'application est ouverte dans une iframe (Owlbear Rodeo) ou seule
   useEffect(() => {
@@ -217,6 +231,26 @@ export default function App() {
               <span>Je confirme être autorisé à ajouter ou modifier les sons de cette room.</span>
             </label>
 
+            {turnstileSiteKey && (
+              <TurnstileWidget
+                siteKey={turnstileSiteKey}
+                onTokenChange={handleTurnstileToken}
+                resetKey={turnstileResetKey}
+              />
+            )}
+
+            {securityMisconfigured && (
+              <p className="w-full max-w-[380px] rounded-xl border border-red-400/25 bg-red-400/[0.05] px-3 py-2 text-center text-[10px] text-red-200">
+                Protection anti-robot requise, mais la clé publique manque dans le frontend.
+              </p>
+            )}
+
+            {uploadsPaused && (
+              <p className="w-full max-w-[380px] rounded-xl border border-amber-400/25 bg-amber-400/[0.05] px-3 py-2 text-center text-[10px] text-amber-100/75">
+                Les nouveaux uploads sont temporairement suspendus. Les sons existants restent disponibles.
+              </p>
+            )}
+
             {/* Zone de Téléversement Stylisée */}
             <label className={`w-full max-w-[380px] h-11 flex items-center justify-center gap-2 border rounded-xl group transition-all duration-300 ${
               quotaFull
@@ -229,6 +263,13 @@ export default function App() {
                 <>
                   <Loader2 className="animate-spin text-purple-400" size={16} />
                   <span className="text-xs font-semibold text-purple-300">Téléversement en cours...</span>
+                </>
+              ) : uploadsPaused ? (
+                <>
+                  <Upload className="text-amber-300/70" size={15} />
+                  <span className="text-xs font-medium text-amber-200/80">
+                    Uploads suspendus
+                  </span>
                 </>
               ) : quotaFull ? (
                 <>
@@ -244,6 +285,13 @@ export default function App() {
                     Confirmez avant l'upload
                   </span>
                 </>
+              ) : !challengeReady ? (
+                <>
+                  <Loader2 className="animate-spin text-sky-300" size={15} />
+                  <span className="text-xs font-medium text-sky-200/70">
+                    Vérification en cours
+                  </span>
+                </>
               ) : (
                 <>
                   <Upload className="text-white/40 group-hover:text-purple-400 group-hover:scale-110 transition-all" size={15} />
@@ -257,7 +305,7 @@ export default function App() {
                 accept="audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/aac,audio/flac,audio/webm,.mp3,.wav,.ogg,.opus,.m4a,.aac,.flac,.webm" 
                 className="hidden" 
                 onChange={player.handleFileUpload} 
-                disabled={player.isUploading || !player.rightsConfirmed || quotaFull}
+                disabled={player.isUploading || !player.rightsConfirmed || !challengeReady || securityMisconfigured || quotaFull}
               />
             </label>
 
@@ -270,7 +318,7 @@ export default function App() {
                   type="text"
                   value={folderName}
                   onChange={(e) => setFolderName(e.target.value)}
-                  disabled={player.isCreatingFolder}
+                  disabled={player.isCreatingFolder || !player.rightsConfirmed || !challengeReady || uploadsPaused}
                   placeholder="Nom du dossier"
                   className="min-w-0 flex-1 h-10 rounded-xl bg-white/[0.03] border border-white/10 px-3 text-xs text-white/80 placeholder:text-white/25 outline-none focus:border-amber-400/50 focus:bg-amber-400/[0.04]"
                   autoFocus
@@ -278,7 +326,7 @@ export default function App() {
                 <Button
                   icon={Check}
                   type="submit"
-                  disabled={player.isCreatingFolder}
+                  disabled={player.isCreatingFolder || !player.rightsConfirmed || !challengeReady || securityMisconfigured || uploadsPaused}
                   loading={player.isCreatingFolder}
                   variant="toggle"
                   size="icon"
@@ -302,6 +350,7 @@ export default function App() {
                 variant="secondary"
                 size="sm"
                 onClick={() => setFolderFormOpen(true)}
+                disabled={!player.rightsConfirmed || !challengeReady || securityMisconfigured || uploadsPaused}
                 className="w-full max-w-[380px] hover:text-amber-200"
               >
                 Ajouter un dossier
@@ -396,6 +445,7 @@ export default function App() {
               toggleFolderFavorite={player.toggleFolderFavorite}
               handleDeleteTrack={player.handleDeleteTrack}
               deletingPath={player.deletingPath}
+              modificationsDisabled={!player.rightsConfirmed || !challengeReady || securityMisconfigured}
             />
   
             {/* Contrôles du Volume & Mute */}

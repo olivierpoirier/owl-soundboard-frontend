@@ -223,7 +223,11 @@ function appError(event, details) {
   console.error(APP_LOG_PREFIX, event, details);
 }
 
-export function useAudioPlayer(apiUrl) {
+export function useAudioPlayer(apiUrl, {
+  turnstileToken = "",
+  turnstileEnabled = false,
+  resetTurnstile = () => {},
+} = {}) {
   const oneShotAudiosRef = useRef([]);
   const loopPlayersRef = useRef(new Map());
   const volumeRef = useRef(1);
@@ -237,6 +241,7 @@ export function useAudioPlayer(apiUrl) {
   const recentUploadsRef = useRef(new Map());
   const uploadInFlightRef = useRef(false);
   const deleteInFlightRef = useRef(new Set());
+  const protectedWriteInFlightRef = useRef(false);
   const audioUnlockedRef = useRef(false);
   const persistentLoopsRef = useRef({});
   const resumePersistentLoopsRef = useRef(() => {});
@@ -255,6 +260,11 @@ export function useAudioPlayer(apiUrl) {
   const [audioUrl, setAudioUrl] = useState("");
   const [audioList, setAudioList] = useState([]);
   const [quota, setQuota] = useState(null);
+  const [service, setService] = useState({
+    uploadsEnabled: true,
+    turnstileRequired: false,
+    auditConfigured: false,
+  });
   const [notification, setNotification] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
@@ -397,6 +407,35 @@ export function useAudioPlayer(apiUrl) {
     };
     setEventLog((current) => [entry, ...current].slice(0, 60));
   }, []);
+
+  const beginProtectedWrite = useCallback(() => {
+    if (protectedWriteInFlightRef.current) {
+      showNotification("⚠️ Une modification de la bibliothèque est déjà en cours");
+      addLog("warn", "Modification R2 déjà en cours.");
+      return null;
+    }
+
+    const challengeRequired = turnstileEnabled || service.turnstileRequired;
+    if (challengeRequired && !turnstileToken) {
+      const message = turnstileEnabled
+        ? "Vérification anti-robot en cours. Réessayez dans un instant."
+        : "Protection anti-robot requise, mais non configurée dans l'application.";
+      showNotification(`⚠️ ${message}`);
+      addLog("warn", message);
+      return null;
+    }
+
+    protectedWriteInFlightRef.current = true;
+    return {
+      token: turnstileToken,
+      challengeRequired,
+    };
+  }, [addLog, service.turnstileRequired, showNotification, turnstileEnabled, turnstileToken]);
+
+  const endProtectedWrite = useCallback((challengeRequired) => {
+    protectedWriteInFlightRef.current = false;
+    if (challengeRequired) resetTurnstile();
+  }, [resetTurnstile]);
 
   const unlockAudio = useCallback(async () => {
     if (audioUnlockedRef.current) {
@@ -1082,6 +1121,9 @@ export function useAudioPlayer(apiUrl) {
         if (payload?.quota) {
           setQuota(payload.quota);
         }
+        if (payload?.service) {
+          setService(payload.service);
+        }
 
         const entries = Array.isArray(payload) ? payload : payload?.items;
         if (!Array.isArray(entries)) {
@@ -1331,6 +1373,18 @@ export function useAudioPlayer(apiUrl) {
       return;
     }
 
+    if (service.uploadsEnabled === false) {
+      showNotification("⚠️ Les nouveaux uploads sont temporairement suspendus");
+      e.target.value = "";
+      return;
+    }
+
+    const protectedWrite = beginProtectedWrite();
+    if (!protectedWrite) {
+      e.target.value = "";
+      return;
+    }
+
     uploadInFlightRef.current = true;
     setIsUploading(true);
     addLog("storage", `Upload demandé : ${file.name} (${formatBytes(file.size)}).`);
@@ -1357,6 +1411,7 @@ export function useAudioPlayer(apiUrl) {
           type: contentType,
           sha256,
           rightsConfirmed,
+          turnstileToken: protectedWrite.token,
         }),
       });
 
@@ -1407,6 +1462,7 @@ export function useAudioPlayer(apiUrl) {
           size: file.size,
           type: contentType,
           sha256,
+          completionToken: prepareResult.upload.completionToken,
         }),
       });
 
@@ -1415,14 +1471,15 @@ export function useAudioPlayer(apiUrl) {
 
       if (!completeResponse.ok) {
         appWarn("storage:complete-upload-failed", completeResult);
-        addLog("warn", `Son présent dans R2, confirmation API échouée (HTTP ${completeResponse.status}) : ${completeResult?.error || "erreur inconnue"}`);
-        showNotification("⚠️ Son ajouté, confirmation incomplète");
-      } else {
-        addLog("storage", completeResult.auditSaved === false
-          ? `Upload confirmé, mais audit R2 incomplet : ${prepareResult.upload.path}.`
-          : `Upload confirmé : ${prepareResult.upload.path}.`);
-        showNotification(completeResult.warning ? "⚠️ Son ajouté, audit incomplet" : "✅ Son ajouté !");
+        markRecentlyDeleted(uploadedItem);
+        setAudioList((items) => (items || []).filter((item) => item.path !== uploadedItem.path));
+        throw new Error(completeResult?.error || `Confirmation refusée (HTTP ${completeResponse.status})`);
       }
+
+      addLog("storage", completeResult.auditSaved === false
+        ? `Upload confirmé, mais audit R2 incomplet : ${prepareResult.upload.path}.`
+        : `Upload confirmé : ${prepareResult.upload.path}.`);
+      showNotification(completeResult.warning ? "⚠️ Son ajouté, audit incomplet" : "✅ Son ajouté !");
 
       const finalItem = completeResult.item || uploadedItem;
       addOrUpdateLocalFile(finalItem);
@@ -1434,6 +1491,7 @@ export function useAudioPlayer(apiUrl) {
       showNotification(err?.message || "❌ Erreur d'upload.");
     } finally {
       uploadInFlightRef.current = false;
+      endProtectedWrite(protectedWrite.challengeRequired);
       setIsUploading(false);
       e.target.value = "";
     }
@@ -1451,6 +1509,19 @@ export function useAudioPlayer(apiUrl) {
       return false;
     }
 
+    if (!rightsConfirmed) {
+      showNotification("⚠️ Confirmez les droits avant de modifier la bibliothèque");
+      return false;
+    }
+
+    if (service.uploadsEnabled === false) {
+      showNotification("⚠️ Les modifications sont temporairement suspendues");
+      return false;
+    }
+
+    const protectedWrite = beginProtectedWrite();
+    if (!protectedWrite) return false;
+
     setIsCreatingFolder(true);
     showNotification("⏳ Création du dossier...");
 
@@ -1465,6 +1536,8 @@ export function useAudioPlayer(apiUrl) {
           uploaderRole: playerRole,
           name: trimmedName,
           path: currentPath,
+          rightsConfirmed,
+          turnstileToken: protectedWrite.token,
         }),
       });
       const result = await response.json();
@@ -1484,6 +1557,7 @@ export function useAudioPlayer(apiUrl) {
       showNotification("❌ Erreur serveur.");
       return false;
     } finally {
+      endProtectedWrite(protectedWrite.challengeRequired);
       setIsCreatingFolder(false);
     }
   };
@@ -1510,6 +1584,9 @@ export function useAudioPlayer(apiUrl) {
     const confirmed = window.confirm(`Supprimer "${displayName}" de cette room ?`);
     if (!confirmed) return false;
 
+    const protectedWrite = beginProtectedWrite();
+    if (!protectedWrite) return false;
+
     const trackKey = file.id || file.path || file.url;
     deleteInFlightRef.current.add(file.path);
     setDeletingPath(file.path);
@@ -1519,7 +1596,10 @@ export function useAudioPlayer(apiUrl) {
     try {
       const params = new URLSearchParams({ roomId, path: file.path });
       if (file.id?.startsWith(`rooms/${roomId}/`)) params.set("key", file.id);
-      const response = await fetch(`${apiUrl}?${params.toString()}`, { method: "DELETE" });
+      const response = await fetch(`${apiUrl}?${params.toString()}`, {
+        method: "DELETE",
+        headers: protectedWrite.token ? { "X-Turnstile-Token": protectedWrite.token } : {},
+      });
       const result = await response.json().catch(() => ({}));
       if (result.quota) setQuota(result.quota);
 
@@ -1563,6 +1643,7 @@ export function useAudioPlayer(apiUrl) {
       return false;
     } finally {
       deleteInFlightRef.current.delete(file.path);
+      endProtectedWrite(protectedWrite.challengeRequired);
       setDeletingPath(null);
     }
   };
@@ -1687,6 +1768,7 @@ export function useAudioPlayer(apiUrl) {
     setAudioUrl,
     audioList,
     quota,
+    service,
     favorites,
     repeatDelays,
     activeLoops,

@@ -16,7 +16,7 @@ export default function AudioSelector({
   audioList, playTrack, playTrackLoop, playAudio, favorites, toggleFavorite, 
   currentPath, changeFolder, goBack, folderFavorites, toggleFolderFavorite,
   repeatDelays, activeLoops, formatRepeatDelay, openRepeatDelayEditor,
-  handleDeleteTrack, deletingPath
+  handleDeleteTrack, deletingPath, modificationsDisabled = false
 }) {
   const itemsPerPage = 6;
   const [page, setPage] = useState(0);
@@ -149,6 +149,7 @@ export default function AudioSelector({
                       size="icon"
                       variant="ghost"
                       loading={isDeleting}
+                      disabled={modificationsDisabled || isDeleting}
                       onClick={(event) => {
                         event.stopPropagation();
                         handleDeleteTrack(file);

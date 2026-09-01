@@ -118,10 +118,16 @@ Tu peux remplacer cette URL avec une variable Vite :
 
 ```env
 VITE_SOUND_API_URL=http://localhost:3000/api/sounds
+VITE_TURNSTILE_SITE_KEY=votre_site_key_publique
 ```
 
 Copie `.env.example` vers `.env.local` en developpement si tu veux pointer le
 frontend vers ton backend local.
+
+`VITE_TURNSTILE_SITE_KEY` est la cle **publique** du widget Cloudflare
+Turnstile. La secret key reste uniquement dans les variables du backend. Le
+widget se renouvelle automatiquement apres chaque modification de la
+bibliotheque.
 
 L'API doit accepter :
 

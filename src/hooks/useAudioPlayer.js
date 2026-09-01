@@ -8,6 +8,7 @@ const AUDIO_LIBRARY_CHANGED_CHANNEL = "mini-tracks-library-changed";
 const LOOP_METADATA_TIMEOUT_MS = 2500;
 const MAX_TIMER_DELAY_MS = 60 * 60 * 1000;
 const AUDIO_LIST_CACHE_TTL_MS = 45 * 1000;
+const RECENT_LIBRARY_CHANGE_TTL_MS = 30 * 1000;
 const AUDIO_LIST_STORAGE_PREFIX = "owlbear.soundboard.audioList.";
 const APP_LOG_PREFIX = "[Owl Soundboard]";
 const SUPPORTED_AUDIO_EXTENSIONS = ["mp3", "wav", "ogg", "opus", "m4a", "aac", "flac", "webm"];
@@ -193,6 +194,8 @@ export function useAudioPlayer(apiUrl) {
   const obrReadyGenerationRef = useRef(0);
   const currentPathRef = useRef(ROOT_PATH);
   const refreshAudioListRef = useRef(() => Promise.resolve(false));
+  const deletedTracksRef = useRef(new Map());
+  const recentUploadsRef = useRef(new Map());
   const audioUnlockedRef = useRef(false);
   const persistentLoopsRef = useRef({});
   const resumePersistentLoopsRef = useRef(() => {});
@@ -288,6 +291,61 @@ export function useAudioPlayer(apiUrl) {
     setNotification(msg);
     notificationTimeoutRef.current = setTimeout(() => setNotification(null), 2500);
   }, []);
+
+  const pruneRecentLibraryChanges = useCallback(() => {
+    const now = Date.now();
+
+    deletedTracksRef.current.forEach((expiresAt, key) => {
+      if (expiresAt <= now) deletedTracksRef.current.delete(key);
+    });
+
+    recentUploadsRef.current.forEach((entry, key) => {
+      if (!entry?.expiresAt || entry.expiresAt <= now) recentUploadsRef.current.delete(key);
+    });
+  }, []);
+
+  const isRecentlyDeleted = useCallback((file) => {
+    if (!file) return false;
+    pruneRecentLibraryChanges();
+    return Boolean(
+      (file.path && deletedTracksRef.current.has(file.path)) ||
+      (file.id && deletedTracksRef.current.has(file.id))
+    );
+  }, [pruneRecentLibraryChanges]);
+
+  const markRecentlyDeleted = useCallback((file) => {
+    if (!file) return;
+
+    const expiresAt = Date.now() + RECENT_LIBRARY_CHANGE_TTL_MS;
+    if (typeof file === "string") {
+      deletedTracksRef.current.set(file, expiresAt);
+      recentUploadsRef.current.delete(file);
+      return;
+    }
+
+    if (file.path) {
+      deletedTracksRef.current.set(file.path, expiresAt);
+      recentUploadsRef.current.delete(file.path);
+    }
+    if (file.id) {
+      deletedTracksRef.current.set(file.id, expiresAt);
+      recentUploadsRef.current.delete(file.id);
+    }
+  }, []);
+
+  const rememberRecentUpload = useCallback((file) => {
+    if (!file?.path) return;
+
+    const normalizedFile = normalizeAudioFileItem(file, roomId);
+    const entry = {
+      file: normalizedFile,
+      expiresAt: Date.now() + RECENT_LIBRARY_CHANGE_TTL_MS,
+    };
+    recentUploadsRef.current.set(normalizedFile.path, entry);
+    if (normalizedFile.id) recentUploadsRef.current.set(normalizedFile.id, entry);
+    deletedTracksRef.current.delete(normalizedFile.path);
+    if (normalizedFile.id) deletedTracksRef.current.delete(normalizedFile.id);
+  }, [roomId]);
 
   const addLog = useCallback((type, message) => {
     const entry = {
@@ -813,11 +871,13 @@ export function useAudioPlayer(apiUrl) {
           });
 
           if (action === "delete" && path) {
+            markRecentlyDeleted(path);
             setAudioList((items) => (items || []).filter((entry) => entry.path !== path));
           }
 
           if (action === "upload" && item?.path) {
             const normalizedFile = normalizeAudioFileItem(item, changedRoomId || OBR.room.id);
+            rememberRecentUpload(normalizedFile);
             if (samePath(getParentPath(normalizedFile.path), currentPathRef.current)) {
               setAudioList((items) => {
                 const withoutExisting = (items || []).filter((entry) =>
@@ -883,10 +943,30 @@ export function useAudioPlayer(apiUrl) {
       obrUnsubscribesRef.current.forEach((unsubscribe) => unsubscribe?.());
       obrUnsubscribesRef.current = [];
     };
-  }, [addLog, clearLocalSounds, playAudio, showNotification, syncPersistentLoops]);
+  }, [addLog, clearLocalSounds, markRecentlyDeleted, playAudio, rememberRecentUpload, showNotification, syncPersistentLoops]);
 
   const applyAudioList = useCallback((items) => {
-    const nextItems = Array.isArray(items) ? items : [];
+    pruneRecentLibraryChanges();
+
+    const nextItems = (Array.isArray(items) ? items : [])
+      .filter((item) => item.isFolder || !isRecentlyDeleted(item));
+    const recentUploadPaths = new Set();
+
+    recentUploadsRef.current.forEach((entry) => {
+      const file = entry?.file;
+      if (!file?.path || recentUploadPaths.has(file.path) || isRecentlyDeleted(file)) return;
+      if (!samePath(getParentPath(file.path), currentPathRef.current)) return;
+      if (nextItems.some((item) => item.path === file.path || item.id === file.id)) return;
+
+      recentUploadPaths.add(file.path);
+      nextItems.push(file);
+    });
+
+    nextItems.sort((a, b) => {
+      if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
     const files = nextItems.filter((item) => !item.isFolder);
 
     setAudioList(nextItems);
@@ -894,7 +974,7 @@ export function useAudioPlayer(apiUrl) {
       if (files.some((file) => file.url === currentUrl)) return currentUrl;
       return files[0]?.url || "";
     });
-  }, []);
+  }, [isRecentlyDeleted, pruneRecentLibraryChanges]);
 
   const fetchAudioList = useCallback((path, { force = false } = {}) => {
     if (!roomId) {
@@ -1031,6 +1111,7 @@ export function useAudioPlayer(apiUrl) {
     if (!file?.path || file.isFolder) return;
 
     const normalizedFile = normalizeAudioFileItem(file, roomId);
+    rememberRecentUpload(normalizedFile);
     if (!samePath(getParentPath(normalizedFile.path), currentPathRef.current)) return;
 
     setAudioList((items) => {
@@ -1043,7 +1124,7 @@ export function useAudioPlayer(apiUrl) {
       });
     });
     setAudioUrl((currentUrl) => currentUrl || normalizedFile.url);
-  }, [roomId]);
+  }, [rememberRecentUpload, roomId]);
 
   const playTrack = useCallback((url, name = "son") => {
     if (!isReady) {
@@ -1356,6 +1437,7 @@ export function useAudioPlayer(apiUrl) {
         stopTrackLoop(trackKey, displayName);
       }
 
+      markRecentlyDeleted(file);
       setAudioList((items) => items.filter((item) => item.path !== file.path));
       setFavorites((current) => {
         const updated = (current || []).filter((favorite) => favorite !== file.url);

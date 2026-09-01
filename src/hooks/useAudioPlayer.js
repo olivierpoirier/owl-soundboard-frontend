@@ -9,6 +9,7 @@ const LOOP_METADATA_TIMEOUT_MS = 2500;
 const MAX_TIMER_DELAY_MS = 60 * 60 * 1000;
 const AUDIO_LIST_CACHE_TTL_MS = 45 * 1000;
 const RECENT_LIBRARY_CHANGE_TTL_MS = 30 * 1000;
+const AUDIO_LIST_REQUEST_TIMEOUT_MS = 12 * 1000;
 const AUDIO_LIST_STORAGE_PREFIX = "owlbear.soundboard.audioList.";
 const APP_LOG_PREFIX = "[Owl Soundboard]";
 const SUPPORTED_AUDIO_EXTENSIONS = ["mp3", "wav", "ogg", "opus", "m4a", "aac", "flac", "webm"];
@@ -86,6 +87,44 @@ function writeAudioListCache(cacheKey, items) {
     sessionStorage.setItem(getAudioListStorageKey(cacheKey), JSON.stringify(entry));
   } catch {
     // Storage can be blocked in some embedded browser contexts; memory cache still helps.
+  }
+}
+
+function clearAudioListCache(cacheKey) {
+  audioListCache.delete(cacheKey);
+  try {
+    sessionStorage.removeItem(getAudioListStorageKey(cacheKey));
+  } catch {
+    // The in-memory cache was still cleared.
+  }
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = AUDIO_LIST_REQUEST_TIMEOUT_MS) {
+  const timeoutController = new AbortController();
+  const externalSignal = options.signal;
+  let timedOut = false;
+  const abortFromExternalSignal = () => timeoutController.abort(externalSignal?.reason);
+
+  if (externalSignal?.aborted) abortFromExternalSignal();
+  else externalSignal?.addEventListener("abort", abortFromExternalSignal, { once: true });
+
+  const timeoutId = window.setTimeout(() => {
+    timedOut = true;
+    timeoutController.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: timeoutController.signal });
+  } catch (error) {
+    if (timedOut) {
+      const timeoutError = new Error(`Le serveur n'a pas répondu après ${Math.round(timeoutMs / 1000)} secondes.`);
+      timeoutError.name = "TimeoutError";
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+    externalSignal?.removeEventListener("abort", abortFromExternalSignal);
   }
 }
 
@@ -196,6 +235,8 @@ export function useAudioPlayer(apiUrl) {
   const refreshAudioListRef = useRef(() => Promise.resolve(false));
   const deletedTracksRef = useRef(new Map());
   const recentUploadsRef = useRef(new Map());
+  const uploadInFlightRef = useRef(false);
+  const deleteInFlightRef = useRef(new Set());
   const audioUnlockedRef = useRef(false);
   const persistentLoopsRef = useRef({});
   const resumePersistentLoopsRef = useRef(() => {});
@@ -976,7 +1017,7 @@ export function useAudioPlayer(apiUrl) {
     });
   }, [isRecentlyDeleted, pruneRecentLibraryChanges]);
 
-  const fetchAudioList = useCallback((path, { force = false } = {}) => {
+  const fetchAudioList = useCallback((path, { force = false, reason = "navigation" } = {}) => {
     if (!roomId) {
       setLoading(true);
       return Promise.resolve(false);
@@ -986,15 +1027,15 @@ export function useAudioPlayer(apiUrl) {
     const requestKey = getAudioListCacheKey(roomId, targetPath);
     const currentRequest = listRequestRef.current;
 
+    // Show a cached list immediately when available, but always continue with a
+    // network request. Session storage must never be the final source of truth.
     const cachedItems = !force ? readAudioListCache(requestKey) : null;
     if (cachedItems) {
-      appLog("storage:use-audio-list-cache", { roomId, path: targetPath, count: cachedItems.length });
-      currentRequest.controller?.abort();
+      appLog("storage:show-audio-list-cache", { roomId, path: targetPath, count: cachedItems.length });
       setCurrentPath(targetPath);
       setDbError(false);
       setLoading(false);
       applyAudioList(cachedItems);
-      return Promise.resolve(true);
     }
 
     if (!force && currentRequest.promise && currentRequest.key === requestKey) {
@@ -1008,21 +1049,34 @@ export function useAudioPlayer(apiUrl) {
     const requestId = currentRequest.requestId + 1;
 
     const requestPromise = (async () => {
-      setLoading(true);
+      setLoading(!cachedItems);
       setDbError(false);
       setCurrentPath(targetPath);
+      addLog("storage", `Synchronisation ${targetPath} (${reason})...`);
 
       try {
         const params = new URLSearchParams({ path: targetPath });
         params.set("roomId", roomId);
         if (force) params.set("refresh", "1");
+        params.set("_", `${Date.now()}-${requestId}`);
 
-        const res = await fetch(`${apiUrl}?${params.toString()}`, {
-          signal: controller.signal,
-        });
-        if (!res.ok) throw new Error("Erreur serveur API");
+        let res;
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          try {
+            res = await fetchWithTimeout(`${apiUrl}?${params.toString()}`, {
+              signal: controller.signal,
+              cache: "no-store",
+            });
+            if (res.ok || res.status < 500 || attempt === 2) break;
+            addLog("warn", `Liste indisponible (HTTP ${res.status}), nouvel essai...`);
+          } catch (error) {
+            if (controller.signal.aborted || attempt === 2) throw error;
+            addLog("warn", `${error.message} Nouvel essai de la liste...`);
+          }
+        }
 
-        const payload = await res.json();
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload?.error || `Erreur API HTTP ${res.status}`);
         if (!mountedRef.current || listRequestRef.current.requestId !== requestId) return false;
 
         if (payload?.quota) {
@@ -1030,6 +1084,9 @@ export function useAudioPlayer(apiUrl) {
         }
 
         const entries = Array.isArray(payload) ? payload : payload?.items;
+        if (!Array.isArray(entries)) {
+          throw new Error("La réponse de la liste audio est invalide.");
+        }
         const folders = entries?.filter((item) => item.isFolder) || [];
         const files = entries?.filter((item) => !item.isFolder) || [];
 
@@ -1038,9 +1095,10 @@ export function useAudioPlayer(apiUrl) {
         const nextItems = [...folders, ...fixedFiles];
         writeAudioListCache(requestKey, nextItems);
         applyAudioList(nextItems);
+        addLog("storage", `Liste synchronisée : ${files.length} son${files.length > 1 ? "s" : ""}, ${folders.length} dossier${folders.length > 1 ? "s" : ""}.`);
         return true;
       } catch (error) {
-        if (error?.name === "AbortError") return false;
+        if (error?.name === "AbortError" && controller.signal.aborted) return false;
 
         if (mountedRef.current && listRequestRef.current.requestId === requestId) {
           const staleItems = readAudioListCache(requestKey, { allowStale: true });
@@ -1050,8 +1108,9 @@ export function useAudioPlayer(apiUrl) {
               path: targetPath,
               error,
             });
-            setDbError(false);
+            setDbError(true);
             applyAudioList(staleItems);
+            addLog("warn", `Liste R2 inaccessible : ${error.message} Cache local affiché.`);
             showNotification("⚠️ Liste audio temporairement servie depuis le cache");
             return true;
           }
@@ -1063,6 +1122,7 @@ export function useAudioPlayer(apiUrl) {
           });
           setDbError(true);
           setAudioList([]);
+          addLog("error", `Échec de la liste : ${error.message}`);
         }
         return false;
       } finally {
@@ -1086,7 +1146,7 @@ export function useAudioPlayer(apiUrl) {
     };
 
     return requestPromise;
-  }, [apiUrl, applyAudioList, roomId, showNotification]);
+  }, [addLog, apiUrl, applyAudioList, roomId, showNotification]);
 
   useEffect(() => {
     refreshAudioListRef.current = fetchAudioList;
@@ -1094,7 +1154,7 @@ export function useAudioPlayer(apiUrl) {
 
   useEffect(() => {
     if (!roomId) return;
-    fetchAudioList(ROOT_PATH);
+    fetchAudioList(ROOT_PATH, { reason: "ouverture" });
   }, [fetchAudioList, roomId]);
 
   const broadcastLibraryChanged = useCallback((action, path, item) => {
@@ -1235,6 +1295,12 @@ export function useAudioPlayer(apiUrl) {
     const file = e.target.files[0];
     if (!file) return;
 
+    if (uploadInFlightRef.current) {
+      addLog("warn", "Un téléversement est déjà en cours.");
+      e.target.value = "";
+      return;
+    }
+
     if (!roomId) {
       showNotification("⚠️ Room Owlbear non détectée");
       e.target.value = "";
@@ -1265,7 +1331,9 @@ export function useAudioPlayer(apiUrl) {
       return;
     }
 
+    uploadInFlightRef.current = true;
     setIsUploading(true);
+    addLog("storage", `Upload demandé : ${file.name} (${formatBytes(file.size)}).`);
     showNotification("⏳ Préparation de l'upload...");
 
     try {
@@ -1299,6 +1367,8 @@ export function useAudioPlayer(apiUrl) {
         throw new Error(prepareResult?.error || "Upload refusé par le serveur");
       }
 
+      addLog("storage", `Upload préparé : ${prepareResult.upload.path}.`);
+
       showNotification("⏳ Envoi du fichier...");
       const uploadResponse = await fetch(prepareResult.upload.url, {
         method: prepareResult.upload.method || "PUT",
@@ -1307,8 +1377,21 @@ export function useAudioPlayer(apiUrl) {
       });
 
       if (!uploadResponse.ok) {
-        throw new Error("Upload R2 refusé. Vérifiez le CORS du bucket.");
+        throw new Error(`Upload R2 refusé (HTTP ${uploadResponse.status}). Vérifiez le CORS du bucket.`);
       }
+
+      addLog("storage", `Fichier reçu par R2 (HTTP ${uploadResponse.status}).`);
+
+      const uploadedItem = {
+        id: prepareResult.upload.key,
+        name: prepareResult.upload.path.split("/").filter(Boolean).pop() || file.name,
+        url: prepareResult.upload.publicUrl,
+        isFolder: false,
+        path: prepareResult.upload.path,
+        size: file.size,
+      };
+      addOrUpdateLocalFile(uploadedItem);
+      clearAudioListCache(getAudioListCacheKey(roomId, currentPath));
 
       const completeResponse = await fetch(apiUrl, {
         method: "POST",
@@ -1332,20 +1415,25 @@ export function useAudioPlayer(apiUrl) {
 
       if (!completeResponse.ok) {
         appWarn("storage:complete-upload-failed", completeResult);
-        showNotification("⚠️ Son ajouté, audit incomplet");
+        addLog("warn", `Son présent dans R2, confirmation API échouée (HTTP ${completeResponse.status}) : ${completeResult?.error || "erreur inconnue"}`);
+        showNotification("⚠️ Son ajouté, confirmation incomplète");
       } else {
-        if (completeResult.item) {
-          addOrUpdateLocalFile(completeResult.item);
-        }
-        broadcastLibraryChanged("upload", prepareResult.upload.path, completeResult.item);
-        showNotification("✅ Son ajouté !");
+        addLog("storage", completeResult.auditSaved === false
+          ? `Upload confirmé, mais audit R2 incomplet : ${prepareResult.upload.path}.`
+          : `Upload confirmé : ${prepareResult.upload.path}.`);
+        showNotification(completeResult.warning ? "⚠️ Son ajouté, audit incomplet" : "✅ Son ajouté !");
       }
 
-      fetchAudioList(currentPath, { force: true });
+      const finalItem = completeResult.item || uploadedItem;
+      addOrUpdateLocalFile(finalItem);
+      broadcastLibraryChanged("upload", prepareResult.upload.path, finalItem);
+      fetchAudioList(currentPath, { force: true, reason: "après upload" });
     } catch (err) {
       appError("storage:upload-failed", err);
+      addLog("error", `Échec upload ${file.name} : ${err?.message || "erreur inconnue"}`);
       showNotification(err?.message || "❌ Erreur d'upload.");
     } finally {
+      uploadInFlightRef.current = false;
       setIsUploading(false);
       e.target.value = "";
     }
@@ -1403,7 +1491,10 @@ export function useAudioPlayer(apiUrl) {
   const handleDeleteTrack = async (file) => {
     if (!file || file.isFolder || !file.path) return false;
 
-    if (deletingPath) return false;
+    if (deleteInFlightRef.current.has(file.path)) {
+      addLog("warn", `Suppression déjà en cours : ${file.name}.`);
+      return false;
+    }
 
     if (!roomId) {
       showNotification("⚠️ Room Owlbear non détectée");
@@ -1420,24 +1511,32 @@ export function useAudioPlayer(apiUrl) {
     if (!confirmed) return false;
 
     const trackKey = file.id || file.path || file.url;
+    deleteInFlightRef.current.add(file.path);
     setDeletingPath(file.path);
+    addLog("storage", `Suppression demandée : ${file.path}.`);
     showNotification("⏳ Suppression du son...");
 
     try {
       const params = new URLSearchParams({ roomId, path: file.path });
+      if (file.id?.startsWith(`rooms/${roomId}/`)) params.set("key", file.id);
       const response = await fetch(`${apiUrl}?${params.toString()}`, { method: "DELETE" });
       const result = await response.json().catch(() => ({}));
       if (result.quota) setQuota(result.quota);
 
       if (!response.ok) {
-        throw new Error(result?.error || "Suppression refusée");
+        throw new Error(`${result?.error || "Suppression refusée"} (HTTP ${response.status})`);
       }
+
+      addLog("storage", result.deleted?.alreadyMissing
+        ? `Fichier déjà absent de R2 : ${file.path}.`
+        : `Suppression confirmée par R2 : ${file.path}.`);
 
       if (persistentLoopsRef.current?.[trackKey]) {
         stopTrackLoop(trackKey, displayName);
       }
 
       markRecentlyDeleted(file);
+      clearAudioListCache(getAudioListCacheKey(roomId, currentPathRef.current));
       setAudioList((items) => items.filter((item) => item.path !== file.path));
       setFavorites((current) => {
         const updated = (current || []).filter((favorite) => favorite !== file.url);
@@ -1454,14 +1553,16 @@ export function useAudioPlayer(apiUrl) {
       broadcastLibraryChanged("delete", file.path);
       showNotification("✅ Son supprimé");
       window.setTimeout(() => {
-        fetchAudioList(currentPathRef.current, { force: true });
+        fetchAudioList(currentPathRef.current, { force: true, reason: "après suppression" });
       }, 750);
       return true;
     } catch (error) {
       appError("storage:delete-track-failed", error);
+      addLog("error", `Échec suppression ${file.path} : ${error?.message || "erreur inconnue"}`);
       showNotification(error?.message || "❌ Suppression impossible");
       return false;
     } finally {
+      deleteInFlightRef.current.delete(file.path);
       setDeletingPath(null);
     }
   };

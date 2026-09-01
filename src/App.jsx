@@ -170,9 +170,12 @@ export default function App() {
         )}
   
         {player.loading ? (
-          <div className="flex flex-col items-center animate-pulse space-y-3 py-12">
-            <div className="w-12 h-12 rounded-full border-2 border-t-purple-500 border-r-transparent border-b-transparent border-l-transparent animate-spin"></div>
-            <p className="text-xs text-purple-400 font-semibold tracking-wide uppercase">Chargement des fichiers...</p>
+          <div className="w-full flex flex-col items-center space-y-5 py-12">
+            <div className="flex flex-col items-center animate-pulse space-y-3">
+              <div className="w-12 h-12 rounded-full border-2 border-t-purple-500 border-r-transparent border-b-transparent border-l-transparent animate-spin"></div>
+              <p className="text-xs text-purple-400 font-semibold tracking-wide uppercase">Chargement des fichiers...</p>
+            </div>
+            <TerminalLog entries={player.eventLog} />
           </div>
         ) : (
           <div className="w-full max-w-sm space-y-5 flex flex-col items-center">

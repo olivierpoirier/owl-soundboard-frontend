@@ -4,6 +4,8 @@ const typeLabels = {
   loop: "LOOP",
   stop: "STOP",
   warn: "WARN",
+  storage: "R2",
+  error: "ERR",
 };
 
 const typeClasses = {
@@ -12,6 +14,8 @@ const typeClasses = {
   loop: "text-emerald-300",
   stop: "text-red-300",
   warn: "text-amber-300",
+  storage: "text-sky-300",
+  error: "text-red-300",
 };
 
 export default function TerminalLog({ entries }) {

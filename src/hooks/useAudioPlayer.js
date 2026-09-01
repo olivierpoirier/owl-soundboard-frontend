@@ -4,6 +4,7 @@ import OBR from "@owlbear-rodeo/sdk";
 const ROOT_PATH = "/";
 const FALLBACK_ROOM_ID = "standalone";
 const ROOM_LOOPS_KEY = "owlbear.soundboard.activeLoops";
+const AUDIO_LIBRARY_CHANGED_CHANNEL = "mini-tracks-library-changed";
 const LOOP_METADATA_TIMEOUT_MS = 2500;
 const MAX_TIMER_DELAY_MS = 60 * 60 * 1000;
 const AUDIO_LIST_CACHE_TTL_MS = 45 * 1000;
@@ -118,6 +119,28 @@ function formatBytes(bytes = 0) {
   return `${value} B`;
 }
 
+function getParentPath(path = "/") {
+  const parts = String(path || "/").split("/").filter(Boolean);
+  parts.pop();
+  return parts.length ? `/${parts.join("/")}` : ROOT_PATH;
+}
+
+function samePath(left = "/", right = "/") {
+  return (left || ROOT_PATH) === (right || ROOT_PATH);
+}
+
+function normalizeAudioFileItem(file, roomId) {
+  return {
+    id: file.id || `${roomId}:${file.path || file.url}`,
+    name: file.name,
+    url: normalizeAudioUrl(file.url),
+    isFolder: false,
+    path: file.path,
+    size: file.size,
+    updatedAt: file.updatedAt,
+  };
+}
+
 async function hashFile(file) {
   if (!window.crypto?.subtle) return "";
   const buffer = await file.arrayBuffer();
@@ -168,6 +191,8 @@ export function useAudioPlayer(apiUrl) {
   const notificationTimeoutRef = useRef(null);
   const obrUnsubscribesRef = useRef([]);
   const obrReadyGenerationRef = useRef(0);
+  const currentPathRef = useRef(ROOT_PATH);
+  const refreshAudioListRef = useRef(() => Promise.resolve(false));
   const audioUnlockedRef = useRef(false);
   const persistentLoopsRef = useRef({});
   const resumePersistentLoopsRef = useRef(() => {});
@@ -203,6 +228,10 @@ export function useAudioPlayer(apiUrl) {
     type: "system",
     message: "Terminal audio prêt.",
   }]);
+
+  useEffect(() => {
+    currentPathRef.current = currentPath;
+  }, [currentPath]);
 
   const [volume, setVolume] = useState(() => {
     const saved = localStorage.getItem("owlbear_volume");
@@ -774,11 +803,63 @@ export function useAudioPlayer(apiUrl) {
           clearLocalSounds();
         });
 
-        obrUnsubscribesRef.current = [unsubscribePlay, unsubscribeStop];
+        const unsubscribeLibraryChanged = OBR.broadcast.onMessage(AUDIO_LIBRARY_CHANGED_CHANNEL, (event) => {
+          const { roomId: changedRoomId, path, action, item } = event.data || {};
+          if (changedRoomId && changedRoomId !== OBR.room.id) return;
+
+          appLog("obr:library-changed-received", {
+            action,
+            path,
+          });
+
+          if (action === "delete" && path) {
+            setAudioList((items) => (items || []).filter((entry) => entry.path !== path));
+          }
+
+          if (action === "upload" && item?.path) {
+            const normalizedFile = normalizeAudioFileItem(item, changedRoomId || OBR.room.id);
+            if (samePath(getParentPath(normalizedFile.path), currentPathRef.current)) {
+              setAudioList((items) => {
+                const withoutExisting = (items || []).filter((entry) =>
+                  entry.isFolder || (entry.path !== normalizedFile.path && entry.id !== normalizedFile.id)
+                );
+                return [...withoutExisting, normalizedFile].sort((a, b) => {
+                  if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+                  return a.name.localeCompare(b.name);
+                });
+              });
+            }
+          }
+
+          if (action === "create_folder" && item?.path) {
+            const folderParentPath = getParentPath(item.path);
+            if (samePath(folderParentPath, currentPathRef.current)) {
+              setAudioList((items) => {
+                const normalizedFolder = {
+                  name: item.name,
+                  path: item.path,
+                  isFolder: true,
+                };
+                const withoutExisting = (items || []).filter((entry) => entry.path !== normalizedFolder.path);
+                return [...withoutExisting, normalizedFolder].sort((a, b) => {
+                  if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+                  return a.name.localeCompare(b.name);
+                });
+              });
+            }
+          }
+
+          window.setTimeout(() => {
+            refreshAudioListRef.current(currentPathRef.current, { force: true });
+          }, 750);
+        });
+
+        obrUnsubscribesRef.current = [unsubscribePlay, unsubscribeStop, unsubscribeLibraryChanged];
         const metadata = await OBR.room.getMetadata();
         if (cancelled || !mountedRef.current || obrReadyGenerationRef.current !== readyGeneration) {
           unsubscribePlay?.();
           unsubscribeStop?.();
+          unsubscribeLibraryChanged?.();
           return;
         }
         syncPersistentLoops(getLoopsFromMetadata(metadata), { alignToStartedAt: true });
@@ -790,7 +871,7 @@ export function useAudioPlayer(apiUrl) {
           syncPersistentLoops(getLoopsFromMetadata(metadataUpdate), { alignToStartedAt: true });
         });
 
-        obrUnsubscribesRef.current = [unsubscribePlay, unsubscribeStop, unsubscribeMetadata];
+        obrUnsubscribesRef.current = [unsubscribePlay, unsubscribeStop, unsubscribeLibraryChanged, unsubscribeMetadata];
       });
     } catch (e) {
       appWarn("obr:not-detected", e);
@@ -872,15 +953,7 @@ export function useAudioPlayer(apiUrl) {
         const folders = entries?.filter((item) => item.isFolder) || [];
         const files = entries?.filter((item) => !item.isFolder) || [];
 
-        const fixedFiles = files.map((file) => ({
-          id: file.id || `${roomId}:${file.path || file.url}`,
-          name: file.name,
-          url: normalizeAudioUrl(file.url),
-          isFolder: false,
-          path: file.path,
-          size: file.size,
-          updatedAt: file.updatedAt,
-        }));
+        const fixedFiles = files.map((file) => normalizeAudioFileItem(file, roomId));
 
         const nextItems = [...folders, ...fixedFiles];
         writeAudioListCache(requestKey, nextItems);
@@ -915,7 +988,7 @@ export function useAudioPlayer(apiUrl) {
       } finally {
         if (listRequestRef.current.requestId === requestId) {
           listRequestRef.current = {
-            key: targetPath,
+            key: requestKey,
             promise: null,
             controller: null,
             requestId,
@@ -936,9 +1009,41 @@ export function useAudioPlayer(apiUrl) {
   }, [apiUrl, applyAudioList, roomId, showNotification]);
 
   useEffect(() => {
+    refreshAudioListRef.current = fetchAudioList;
+  }, [fetchAudioList]);
+
+  useEffect(() => {
     if (!roomId) return;
     fetchAudioList(ROOT_PATH);
   }, [fetchAudioList, roomId]);
+
+  const broadcastLibraryChanged = useCallback((action, path, item) => {
+    if (!isReady || !roomId) return;
+
+    OBR.broadcast.sendMessage(
+      AUDIO_LIBRARY_CHANGED_CHANNEL,
+      { action, path, roomId, item },
+      { destination: "REMOTE" }
+    );
+  }, [isReady, roomId]);
+
+  const addOrUpdateLocalFile = useCallback((file) => {
+    if (!file?.path || file.isFolder) return;
+
+    const normalizedFile = normalizeAudioFileItem(file, roomId);
+    if (!samePath(getParentPath(normalizedFile.path), currentPathRef.current)) return;
+
+    setAudioList((items) => {
+      const withoutExisting = (items || []).filter((item) =>
+        item.isFolder || (item.path !== normalizedFile.path && item.id !== normalizedFile.id)
+      );
+      return [...withoutExisting, normalizedFile].sort((a, b) => {
+        if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+    });
+    setAudioUrl((currentUrl) => currentUrl || normalizedFile.url);
+  }, [roomId]);
 
   const playTrack = useCallback((url, name = "son") => {
     if (!isReady) {
@@ -1148,6 +1253,10 @@ export function useAudioPlayer(apiUrl) {
         appWarn("storage:complete-upload-failed", completeResult);
         showNotification("⚠️ Son ajouté, audit incomplet");
       } else {
+        if (completeResult.item) {
+          addOrUpdateLocalFile(completeResult.item);
+        }
+        broadcastLibraryChanged("upload", prepareResult.upload.path, completeResult.item);
         showNotification("✅ Son ajouté !");
       }
 
@@ -1194,6 +1303,7 @@ export function useAudioPlayer(apiUrl) {
 
       if (result.success) {
         showNotification("✅ Dossier ajouté !");
+        broadcastLibraryChanged("create_folder", result.item?.path || currentPath, result.item);
         fetchAudioList(currentPath, { force: true });
         return true;
       }
@@ -1212,8 +1322,15 @@ export function useAudioPlayer(apiUrl) {
   const handleDeleteTrack = async (file) => {
     if (!file || file.isFolder || !file.path) return false;
 
+    if (deletingPath) return false;
+
     if (!roomId) {
       showNotification("⚠️ Room Owlbear non détectée");
+      return false;
+    }
+
+    if (!rightsConfirmed) {
+      showNotification("⚠️ Confirmez les droits avant de modifier la bibliothèque");
       return false;
     }
 
@@ -1252,8 +1369,11 @@ export function useAudioPlayer(apiUrl) {
         return updated;
       });
 
+      broadcastLibraryChanged("delete", file.path);
       showNotification("✅ Son supprimé");
-      fetchAudioList(currentPath, { force: true });
+      window.setTimeout(() => {
+        fetchAudioList(currentPathRef.current, { force: true });
+      }, 750);
       return true;
     } catch (error) {
       appError("storage:delete-track-failed", error);

@@ -183,12 +183,12 @@ export default function App() {
               </p>
             )}
 
-            {quota && (
+            {player.roomId && (
               <div className="w-full max-w-[380px] rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
                 <div className="flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-wider text-white/40">
                   <span>Quota room</span>
                   <span className={quotaFull ? "text-red-300" : "text-white/45"}>
-                    {formatBytes(quota.usedBytes)} / {formatBytes(quota.limits.storageBytes)}
+                    {quota ? `${formatBytes(quota.usedBytes)} / ${formatBytes(quota.limits.storageBytes)}` : "Chargement"}
                   </span>
                 </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
@@ -198,8 +198,8 @@ export default function App() {
                   />
                 </div>
                 <div className="flex items-center justify-between gap-3 text-[10px] text-white/35">
-                  <span>{quota.fileCount} / {quota.limits.maxFiles} fichiers</span>
-                  <span>Max {formatBytes(quota.limits.maxUploadBytes)} par fichier</span>
+                  <span>{quota ? `${quota.fileCount} / ${quota.limits.maxFiles} fichiers` : "Liste en cours"}</span>
+                  <span>{quota ? `Max ${formatBytes(quota.limits.maxUploadBytes)} par fichier` : "..."}</span>
                 </div>
               </div>
             )}
@@ -211,14 +211,16 @@ export default function App() {
                 onChange={(event) => player.setRightsConfirmed(event.target.checked)}
                 className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-amber-300"
               />
-              <span>Je confirme avoir les droits nécessaires pour utiliser le fichier audio dans cette room.</span>
+              <span>Je confirme être autorisé à ajouter ou modifier les sons de cette room.</span>
             </label>
 
             {/* Zone de Téléversement Stylisée */}
-            <label className={`w-full max-w-[380px] h-11 flex items-center justify-center gap-2 border rounded-xl cursor-pointer group transition-all duration-300 ${
+            <label className={`w-full max-w-[380px] h-11 flex items-center justify-center gap-2 border rounded-xl group transition-all duration-300 ${
               quotaFull
-                ? "border-red-400/25 bg-red-400/[0.04] hover:border-red-400/40"
-                : "border-white/10 hover:border-purple-500/40 bg-white/[0.03] hover:bg-purple-500/[0.06] hover:shadow-[0_0_20px_rgba(168,85,247,0.15)]"
+                ? "cursor-not-allowed border-red-400/25 bg-red-400/[0.04] hover:border-red-400/40"
+                : player.rightsConfirmed
+                  ? "cursor-pointer border-white/10 hover:border-purple-500/40 bg-white/[0.03] hover:bg-purple-500/[0.06] hover:shadow-[0_0_20px_rgba(168,85,247,0.15)]"
+                  : "cursor-not-allowed border-white/10 bg-white/[0.02] opacity-60"
             }`}>
               {player.isUploading ? (
                 <>
@@ -230,6 +232,13 @@ export default function App() {
                   <Upload className="text-red-300/70" size={15} />
                   <span className="text-xs font-medium text-red-200/80">
                     Quota atteint
+                  </span>
+                </>
+              ) : !player.rightsConfirmed ? (
+                <>
+                  <Upload className="text-white/30" size={15} />
+                  <span className="text-xs font-medium text-white/45">
+                    Confirmez avant l'upload
                   </span>
                 </>
               ) : (
@@ -245,7 +254,7 @@ export default function App() {
                 accept="audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/aac,audio/flac,audio/webm,.mp3,.wav,.ogg,.opus,.m4a,.aac,.flac,.webm" 
                 className="hidden" 
                 onChange={player.handleFileUpload} 
-                disabled={player.isUploading}
+                disabled={player.isUploading || !player.rightsConfirmed || quotaFull}
               />
             </label>
 

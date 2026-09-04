@@ -33,7 +33,7 @@ Owl Soundboard s'intègre directement dans une salle Owlbear Rodeo sous forme de
 
 ## Fonctionnalités
 
-- **Lecture synchronisée dans Owlbear Rodeo** : un son déclenché par un utilisateur est diffusé aux autres participants via le SDK Owlbear.
+- **Lecture synchronisée dans Owlbear Rodeo** : un moteur audio d'arrière-plan reçoit les sons chez chaque participant, même lorsque le panneau est fermé.
 - **Pré-écoute locale** : l'icône casque permet au MJ de tester un son sans le diffuser à la table.
 - **Bibliothèque par room** : les sons sont isolés avec `OBR.room.id`.
 - **Navigation par dossiers** : la bibliothèque audio conserve une structure de dossiers virtuelle dans la room.
@@ -56,11 +56,11 @@ Owl Soundboard s'intègre directement dans une salle Owlbear Rodeo sous forme de
 flowchart LR
   Frontend["Frontend React<br/>Owl Soundboard"] --> Backend["Backend serverless<br/>/api/sounds"]
   Backend --> R2["Cloudflare R2<br/>rooms/{roomId}"]
-  Frontend --> Owlbear["Owlbear Rodeo<br/>Extension popover"]
-  Owlbear --> Players["Joueurs<br/>Lecture synchronisée"]
+  Frontend --> Owlbear["Owlbear Rodeo<br/>Popover + moteur audio d'arrière-plan"]
+  Owlbear --> Players["Joueurs<br/>Lecture synchronisée, panneau ouvert ou fermé"]
 ```
 
-Les fichiers audio ne sont pas stockés dans Owlbear. L'app utilise le SDK Owlbear pour synchroniser la lecture et le backend pour stocker les fichiers dans R2 par room.
+Les fichiers audio ne sont pas stockés dans Owlbear. L'app utilise le SDK Owlbear pour synchroniser la lecture, un iframe d'arrière-plan pour maintenir le récepteur actif chez chaque joueur et le backend pour stocker les fichiers dans R2 par room.
 
 ## Stack
 

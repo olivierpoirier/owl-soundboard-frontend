@@ -5,8 +5,10 @@ const ROOT_PATH = "/";
 const FALLBACK_ROOM_ID = "standalone";
 const ROOM_LOOPS_KEY = "owlbear.soundboard.activeLoops";
 const AUDIO_LIBRARY_CHANGED_CHANNEL = "mini-tracks-library-changed";
+const AUDIO_SETTINGS_CHANNEL = "mini-tracks-audio-settings";
 const LOOP_METADATA_TIMEOUT_MS = 2500;
 const MAX_TIMER_DELAY_MS = 60 * 60 * 1000;
+const MAX_CONCURRENT_ONE_SHOTS = 24;
 const AUDIO_LIST_CACHE_TTL_MS = 45 * 1000;
 const RECENT_LIBRARY_CHANGE_TTL_MS = 30 * 1000;
 const AUDIO_LIST_REQUEST_TIMEOUT_MS = 12 * 1000;
@@ -17,6 +19,11 @@ const audioListCache = new Map();
 
 function clampDelay(seconds) {
   return Math.max(0, Math.min(24 * 60 * 60, Number(seconds) || 0));
+}
+
+function clampVolume(value) {
+  const volume = Number(value);
+  return Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1;
 }
 
 function getLoopsFromMetadata(metadata) {
@@ -197,7 +204,12 @@ function formatLogTime(date = new Date()) {
 }
 
 function appLog(event, details) {
-  const debugEnabled = localStorage.getItem("owl_soundboard_debug") === "true";
+  let debugEnabled = false;
+  try {
+    debugEnabled = localStorage.getItem("owl_soundboard_debug") === "true";
+  } catch {
+    // Third-party storage may be disabled in the embedded extension iframe.
+  }
   if (!debugEnabled) return;
 
   if (details === undefined) {
@@ -223,11 +235,21 @@ function appError(event, details) {
   console.error(APP_LOG_PREFIX, event, details);
 }
 
+function writeLocalStorage(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // The in-memory state remains usable when third-party storage is blocked.
+  }
+}
+
 export function useAudioPlayer(apiUrl, {
   turnstileToken = "",
   turnstileEnabled = false,
   resetTurnstile = () => {},
+  backgroundMode = false,
 } = {}) {
+  const audioEngineEnabled = backgroundMode || !OBR.isAvailable;
   const oneShotAudiosRef = useRef([]);
   const loopPlayersRef = useRef(new Map());
   const volumeRef = useRef(1);
@@ -243,6 +265,8 @@ export function useAudioPlayer(apiUrl, {
   const deleteInFlightRef = useRef(new Set());
   const protectedWriteInFlightRef = useRef(false);
   const audioUnlockedRef = useRef(false);
+  const lastAudioFailureNoticeRef = useRef(0);
+  const lastSilentPlaybackNoticeRef = useRef(0);
   const persistentLoopsRef = useRef({});
   const resumePersistentLoopsRef = useRef(() => {});
   const mountedRef = useRef(true);
@@ -288,12 +312,20 @@ export function useAudioPlayer(apiUrl, {
   }, [currentPath]);
 
   const [volume, setVolume] = useState(() => {
-    const saved = localStorage.getItem("owlbear_volume");
-    return saved !== null ? parseFloat(saved) : 1;
+    try {
+      const saved = localStorage.getItem("owlbear_volume");
+      return saved !== null ? clampVolume(saved) : 1;
+    } catch {
+      return 1;
+    }
   });
 
   const [isMuted, setIsMuted] = useState(() => {
-    return localStorage.getItem("owlbear_isMuted") === "true";
+    try {
+      return localStorage.getItem("owlbear_isMuted") === "true";
+    } catch {
+      return false;
+    }
   });
 
   const [favorites, setFavorites] = useState(() => {
@@ -325,11 +357,39 @@ export function useAudioPlayer(apiUrl, {
 
   useEffect(() => {
     volumeRef.current = volume;
+    oneShotAudiosRef.current.forEach((audio) => {
+      audio.volume = mutedRef.current ? 0 : volume;
+    });
+    loopPlayersRef.current.forEach((player) => {
+      if (player.audio) player.audio.volume = mutedRef.current ? 0 : volume;
+    });
   }, [volume]);
 
   useEffect(() => {
     mutedRef.current = isMuted;
+    oneShotAudiosRef.current.forEach((audio) => {
+      audio.volume = isMuted ? 0 : volumeRef.current;
+    });
+    loopPlayersRef.current.forEach((player) => {
+      if (player.audio) player.audio.volume = isMuted ? 0 : volumeRef.current;
+    });
   }, [isMuted]);
+
+  useEffect(() => {
+    if (!backgroundMode) return undefined;
+
+    const handleStorage = (event) => {
+      if (event.key === "owlbear_volume") {
+        setVolume(clampVolume(event.newValue ?? 1));
+      }
+      if (event.key === "owlbear_isMuted") {
+        setIsMuted(event.newValue === "true");
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [backgroundMode]);
 
   useEffect(() => {
     audioUnlockedRef.current = audioUnlocked;
@@ -476,6 +536,42 @@ export function useAudioPlayer(apiUrl, {
     }
   }, [addLog, showNotification]);
 
+  useEffect(() => {
+    if (!backgroundMode) return;
+    unlockAudio();
+  }, [backgroundMode, unlockAudio]);
+
+  const reportAudioFailure = useCallback((error) => {
+    const autoplayBlocked = error?.name === "NotAllowedError";
+    const message = autoplayBlocked
+      ? "Lecture automatique bloquée. Autorisez l'audio pour Owlbear Rodeo."
+      : "Le son n'a pas pu être chargé. Vérifiez le format et l'URL du fichier.";
+
+    appWarn("audio:playback-failed", error);
+    addLog("warn", message);
+    showNotification(`⚠️ ${message}`);
+
+    const now = Date.now();
+    if (backgroundMode && OBR.isReady && now - lastAudioFailureNoticeRef.current > 5000) {
+      lastAudioFailureNoticeRef.current = now;
+      OBR.notification.show(message, "WARNING").catch((notificationError) => {
+        appWarn("obr:audio-failure-notification-failed", notificationError);
+      });
+    }
+  }, [addLog, backgroundMode, showNotification]);
+
+  const notifyIfLocallySilent = useCallback(() => {
+    if (!backgroundMode || !OBR.isReady || (!mutedRef.current && volumeRef.current > 0)) return;
+
+    const now = Date.now();
+    if (now - lastSilentPlaybackNoticeRef.current <= 5000) return;
+    lastSilentPlaybackNoticeRef.current = now;
+    OBR.notification.show(
+      "Un son a été reçu, mais Owl Soundboard est actuellement muet.",
+      "INFO"
+    ).catch((error) => appWarn("obr:muted-notification-failed", error));
+  }, [backgroundMode]);
+
   const formatRepeatDelay = useCallback((seconds) => {
     const totalSeconds = clampDelay(seconds);
     if (totalSeconds === 0) return "immédiat";
@@ -620,15 +716,15 @@ export function useAudioPlayer(apiUrl, {
             });
           })
           .catch((error) => {
-            appWarn("repeat:play-blocked", {
+            const playbackError = {
               loopId: loop.id,
               name: loop.name,
               error,
-            });
+            };
+            appWarn("repeat:play-blocked", playbackError);
             audioUnlockedRef.current = false;
             setAudioUnlocked(false);
-            addLog("warn", "Lecture bloquée par le navigateur. Activation audio requise.");
-            showNotification("⚠️ Audio bloqué: cliquez sur Activer l'audio");
+            reportAudioFailure(error);
 
             const latest = loopPlayersRef.current.get(loop.id);
             if (latest?.audio === audio) {
@@ -763,7 +859,7 @@ export function useAudioPlayer(apiUrl, {
     }, LOOP_METADATA_TIMEOUT_MS);
     registerLoopPlayer(loop, { audio: null, timerId: null, probe, probeTimerId });
     probe.load?.();
-  }, [addLog, registerLoopPlayer, showNotification, stopLoopInstance, syncActiveSoundsCount]);
+  }, [registerLoopPlayer, reportAudioFailure, stopLoopInstance, syncActiveSoundsCount]);
 
   const syncPersistentLoops = useCallback((loops, { alignToStartedAt = true } = {}) => {
     const previousLoops = persistentLoopsRef.current || {};
@@ -802,10 +898,10 @@ export function useAudioPlayer(apiUrl, {
       });
     }
 
-    if (!audioUnlockedRef.current) return;
+    if (!audioEngineEnabled) return;
 
     loopEntries.forEach((loop) => startLoopInstance(loop, { alignToStartedAt }));
-  }, [addLog, formatRepeatDelay, startLoopInstance, stopLoopInstance]);
+  }, [addLog, audioEngineEnabled, formatRepeatDelay, startLoopInstance, stopLoopInstance]);
 
   useEffect(() => {
     resumePersistentLoopsRef.current = () => {
@@ -845,32 +941,53 @@ export function useAudioPlayer(apiUrl, {
   }, []);
 
   const playAudio = useCallback((url) => {
+    let audio = null;
     try {
-      const audio = new Audio(url);
+      audio = new Audio(url);
       audio._owlbearStopped = false;
       audio.volume = mutedRef.current ? 0 : volumeRef.current;
 
-      audio.play()
-        .then(() => {
-          setAudioUnlocked(true);
-          oneShotAudiosRef.current.push(audio);
-          syncActiveSoundsCount();
-        })
-        .catch((error) => {
-          appWarn("audio:play-blocked", error);
-          audioUnlockedRef.current = false;
-          setAudioUnlocked(false);
-          showNotification("⚠️ Audio bloqué: cliquez sur Activer l'audio");
-        });
-
-      audio.addEventListener("ended", () => {
+      const removeAudio = () => {
         oneShotAudiosRef.current = oneShotAudiosRef.current.filter((item) => item !== audio);
         syncActiveSoundsCount();
-      });
+      };
+
+      while (oneShotAudiosRef.current.length >= MAX_CONCURRENT_ONE_SHOTS) {
+        const oldestAudio = oneShotAudiosRef.current.shift();
+        if (!oldestAudio) break;
+        oldestAudio._owlbearStopped = true;
+        oldestAudio.pause();
+        oldestAudio.src = "";
+      }
+      oneShotAudiosRef.current.push(audio);
+      syncActiveSoundsCount();
+
+      const playback = audio.play()
+        .then(() => {
+          setAudioUnlocked(true);
+          return true;
+        })
+        .catch((error) => {
+          audioUnlockedRef.current = false;
+          setAudioUnlocked(false);
+          removeAudio();
+          reportAudioFailure(error);
+          return false;
+        });
+
+      audio.addEventListener("ended", removeAudio, { once: true });
+      audio.addEventListener("error", removeAudio, { once: true });
+      return playback;
     } catch (e) {
       appError("audio:create-instance-failed", e);
+      if (audio) {
+        oneShotAudiosRef.current = oneShotAudiosRef.current.filter((item) => item !== audio);
+        syncActiveSoundsCount();
+      }
+      reportAudioFailure(e);
+      return Promise.resolve(false);
     }
-  }, [showNotification, syncActiveSoundsCount]);
+  }, [reportAudioFailure, syncActiveSoundsCount]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -886,6 +1003,8 @@ export function useAudioPlayer(apiUrl, {
   }, [clearLocalSounds]);
 
   useEffect(() => {
+    if (backgroundMode) return undefined;
+
     const handleFirstInteraction = () => {
       unlockAudio();
     };
@@ -899,7 +1018,7 @@ export function useAudioPlayer(apiUrl, {
       window.removeEventListener("keydown", handleFirstInteraction, { capture: true });
       window.removeEventListener("touchstart", handleFirstInteraction, { capture: true });
     };
-  }, [unlockAudio]);
+  }, [backgroundMode, unlockAudio]);
 
   useEffect(() => {
     if (!audioUnlocked) return;
@@ -921,25 +1040,37 @@ export function useAudioPlayer(apiUrl, {
           .then((role) => setPlayerRole(role || "PLAYER"))
           .catch(() => setPlayerRole("PLAYER"));
 
-        const unsubscribePlay = OBR.broadcast.onMessage("mini-tracks-play", (event) => {
-          const { url, senderName } = event.data || {};
-          if (!url) return;
-          appLog("obr:broadcast-play-received", {
-            name: event.data?.name,
-            senderName,
-          });
-          addLog("play", `${senderName || "MJ"} a joué: ${event.data?.name || "son"}.`);
-          showNotification(`🔊 Son déclenché par ${senderName || "MJ"}`);
-          playAudio(url);
-        });
+        const unsubscribePlay = audioEngineEnabled
+          ? OBR.broadcast.onMessage("mini-tracks-play", (event) => {
+            const { url, senderName } = event.data || {};
+            if (!url) return;
+            appLog("obr:broadcast-play-received", {
+              name: event.data?.name,
+              senderName,
+            });
+            addLog("play", `${senderName || "MJ"} a joué: ${event.data?.name || "son"}.`);
+            showNotification(`🔊 Son déclenché par ${senderName || "MJ"}`);
+            notifyIfLocallySilent();
+            playAudio(url);
+          })
+          : undefined;
 
-        const unsubscribeStop = OBR.broadcast.onMessage("mini-tracks-stop", (event) => {
-          const { senderName } = event.data || {};
-          appLog("obr:broadcast-stop-received", { senderName });
-          addLog("stop", `${senderName || "MJ"} a arrêté tous les sons.`);
-          showNotification(`⏹️ Sons arrêtés par ${senderName || "MJ"}`);
-          clearLocalSounds();
-        });
+        const unsubscribeStop = audioEngineEnabled
+          ? OBR.broadcast.onMessage("mini-tracks-stop", (event) => {
+            const { senderName } = event.data || {};
+            appLog("obr:broadcast-stop-received", { senderName });
+            addLog("stop", `${senderName || "MJ"} a arrêté tous les sons.`);
+            showNotification(`⏹️ Sons arrêtés par ${senderName || "MJ"}`);
+            clearLocalSounds();
+          })
+          : undefined;
+
+        const unsubscribeAudioSettings = audioEngineEnabled
+          ? OBR.broadcast.onMessage(AUDIO_SETTINGS_CHANNEL, (event) => {
+            if (event.data?.volume !== undefined) setVolume(clampVolume(event.data.volume));
+            if (event.data?.muted !== undefined) setIsMuted(Boolean(event.data.muted));
+          })
+          : undefined;
 
         const unsubscribeLibraryChanged = OBR.broadcast.onMessage(AUDIO_LIBRARY_CHANGED_CHANNEL, (event) => {
           const { roomId: changedRoomId, path, action, item } = event.data || {};
@@ -994,11 +1125,17 @@ export function useAudioPlayer(apiUrl, {
           }, 750);
         });
 
-        obrUnsubscribesRef.current = [unsubscribePlay, unsubscribeStop, unsubscribeLibraryChanged];
+        obrUnsubscribesRef.current = [
+          unsubscribePlay,
+          unsubscribeStop,
+          unsubscribeAudioSettings,
+          unsubscribeLibraryChanged,
+        ];
         const metadata = await OBR.room.getMetadata();
         if (cancelled || !mountedRef.current || obrReadyGenerationRef.current !== readyGeneration) {
           unsubscribePlay?.();
           unsubscribeStop?.();
+          unsubscribeAudioSettings?.();
           unsubscribeLibraryChanged?.();
           return;
         }
@@ -1011,7 +1148,13 @@ export function useAudioPlayer(apiUrl, {
           syncPersistentLoops(getLoopsFromMetadata(metadataUpdate), { alignToStartedAt: true });
         });
 
-        obrUnsubscribesRef.current = [unsubscribePlay, unsubscribeStop, unsubscribeLibraryChanged, unsubscribeMetadata];
+        obrUnsubscribesRef.current = [
+          unsubscribePlay,
+          unsubscribeStop,
+          unsubscribeAudioSettings,
+          unsubscribeLibraryChanged,
+          unsubscribeMetadata,
+        ];
       });
     } catch (e) {
       appWarn("obr:not-detected", e);
@@ -1023,7 +1166,7 @@ export function useAudioPlayer(apiUrl, {
       obrUnsubscribesRef.current.forEach((unsubscribe) => unsubscribe?.());
       obrUnsubscribesRef.current = [];
     };
-  }, [addLog, clearLocalSounds, markRecentlyDeleted, playAudio, rememberRecentUpload, showNotification, syncPersistentLoops]);
+  }, [addLog, audioEngineEnabled, clearLocalSounds, markRecentlyDeleted, notifyIfLocallySilent, playAudio, rememberRecentUpload, showNotification, syncPersistentLoops]);
 
   const applyAudioList = useCallback((items) => {
     pruneRecentLibraryChanges();
@@ -1195,9 +1338,12 @@ export function useAudioPlayer(apiUrl, {
   }, [fetchAudioList]);
 
   useEffect(() => {
-    if (!roomId) return;
+    if (!roomId || backgroundMode) {
+      if (backgroundMode) setLoading(false);
+      return;
+    }
     fetchAudioList(ROOT_PATH, { reason: "ouverture" });
-  }, [fetchAudioList, roomId]);
+  }, [backgroundMode, fetchAudioList, roomId]);
 
   const broadcastLibraryChanged = useCallback((action, path, item) => {
     if (!isReady || !roomId) return;
@@ -1235,16 +1381,26 @@ export function useAudioPlayer(apiUrl, {
       return;
     }
 
-    OBR.player.getName().then((playerName) => {
-      OBR.broadcast.sendMessage(
-        "mini-tracks-play",
-        { url, name, senderName: playerName || "MJ" },
-        { destination: "REMOTE" }
-      );
-      addLog("play", `${playerName || "MJ"} a joué: ${name}.`);
-    });
-    playAudio(url);
-  }, [addLog, isReady, playAudio]);
+    OBR.player.getName()
+      .catch((error) => {
+        appWarn("obr:player-name-failed", error);
+        return "MJ";
+      })
+      .then(async (playerName) => {
+        await OBR.broadcast.sendMessage(
+          "mini-tracks-play",
+          { url, name, senderName: playerName || "MJ" },
+          { destination: "ALL" }
+        );
+        addLog("play", `${playerName || "MJ"} a joué: ${name}.`);
+      })
+      .catch((error) => {
+        appWarn("obr:broadcast-play-failed", error);
+        addLog("error", `Diffusion impossible: ${name}.`);
+        showNotification("⚠️ Diffusion impossible; lecture locale uniquement");
+        playAudio(url);
+      });
+  }, [addLog, isReady, playAudio, showNotification]);
 
   const removePersistentLoop = useCallback(async (loopId) => {
     const metadata = await OBR.room.getMetadata();
@@ -1270,7 +1426,10 @@ export function useAudioPlayer(apiUrl, {
       return;
     }
 
-    OBR.player.getName().then(async (playerName) => {
+    OBR.player.getName().catch((error) => {
+      appWarn("obr:player-name-failed", error);
+      return "MJ";
+    }).then(async (playerName) => {
       addLog("stop", `${playerName || "MJ"} a arrêté la boucle: ${name}.`);
       try {
         await removePersistentLoop(loopId);
@@ -1309,7 +1468,10 @@ export function useAudioPlayer(apiUrl, {
       return;
     }
 
-    OBR.player.getName().then(async (playerName) => {
+    OBR.player.getName().catch((error) => {
+      appWarn("obr:player-name-failed", error);
+      return "MJ";
+    }).then(async (playerName) => {
       const loopWithSender = { ...loop, senderName: playerName || "MJ" };
       appLog("repeat:toggle-start", {
         loopId,
@@ -1317,7 +1479,7 @@ export function useAudioPlayer(apiUrl, {
         playerName: playerName || "MJ",
         delay,
       });
-      startLoopInstance(loopWithSender);
+      if (audioEngineEnabled) startLoopInstance(loopWithSender);
       syncPersistentLoops({ ...(persistentLoopsRef.current || {}), [loopId]: loopWithSender }, { alignToStartedAt: false });
       showNotification(delay > 0 ? `🔁 Répétition après ${formatRepeatDelay(delay)}` : "🔁 Boucle démarrée");
       try {
@@ -1331,7 +1493,7 @@ export function useAudioPlayer(apiUrl, {
         showNotification("⚠️ Boucle lancée localement, mais non sauvegardée");
       }
     });
-  }, [formatRepeatDelay, isReady, persistLoop, repeatDelays, showNotification, startLoopInstance, stopTrackLoop, syncPersistentLoops]);
+  }, [audioEngineEnabled, formatRepeatDelay, isReady, persistLoop, repeatDelays, showNotification, startLoopInstance, stopTrackLoop, syncPersistentLoops]);
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
@@ -1715,20 +1877,35 @@ export function useAudioPlayer(apiUrl, {
   };
 
   const handleVolumeChange = (newVolume) => {
-    setVolume(newVolume);
-    localStorage.setItem("owlbear_volume", newVolume.toString());
+    const safeVolume = clampVolume(newVolume);
+    setVolume(safeVolume);
+    writeLocalStorage("owlbear_volume", safeVolume.toString());
+    if (isReady) {
+      OBR.broadcast.sendMessage(
+        AUDIO_SETTINGS_CHANNEL,
+        { volume: safeVolume },
+        { destination: "LOCAL" }
+      ).catch((error) => appWarn("obr:volume-sync-failed", error));
+    }
     oneShotAudiosRef.current.forEach((audio) => {
-      audio.volume = mutedRef.current ? 0 : newVolume;
+      audio.volume = mutedRef.current ? 0 : safeVolume;
     });
     loopPlayersRef.current.forEach((player) => {
-      if (player.audio) player.audio.volume = mutedRef.current ? 0 : newVolume;
+      if (player.audio) player.audio.volume = mutedRef.current ? 0 : safeVolume;
     });
   };
 
   const toggleMute = () => {
     const newMuted = !isMuted;
     setIsMuted(newMuted);
-    localStorage.setItem("owlbear_isMuted", newMuted.toString());
+    writeLocalStorage("owlbear_isMuted", newMuted.toString());
+    if (isReady) {
+      OBR.broadcast.sendMessage(
+        AUDIO_SETTINGS_CHANNEL,
+        { muted: newMuted },
+        { destination: "LOCAL" }
+      ).catch((error) => appWarn("obr:mute-sync-failed", error));
+    }
     oneShotAudiosRef.current.forEach((audio) => {
       audio.volume = newMuted ? 0 : volumeRef.current;
     });
@@ -1741,13 +1918,22 @@ export function useAudioPlayer(apiUrl, {
     clearLocalSounds();
 
     if (broadcast && isReady) {
-      OBR.player.getName().then(async (playerName) => {
+      OBR.player.getName().catch((error) => {
+        appWarn("obr:player-name-failed", error);
+        return "MJ";
+      }).then(async (playerName) => {
         addLog("stop", `${playerName || "MJ"} a arrêté tous les sons.`);
-        OBR.broadcast.sendMessage(
-          "mini-tracks-stop",
-          { senderName: playerName || "MJ" },
-          { destination: "REMOTE" }
-        );
+        try {
+          await OBR.broadcast.sendMessage(
+            "mini-tracks-stop",
+            { senderName: playerName || "MJ" },
+            { destination: "ALL" }
+          );
+        } catch (error) {
+          appWarn("obr:broadcast-stop-failed", error);
+          addLog("error", "L'arrêt global n'a pas pu être diffusé.");
+          showNotification("⚠️ Arrêt effectué localement seulement");
+        }
         try {
           await clearPersistentLoops();
         } catch (error) {

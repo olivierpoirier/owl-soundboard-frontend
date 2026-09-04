@@ -1,9 +1,10 @@
 {
     "name": "Owl Soundboard",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "manifest_version": 1,
     "icon": "/iconExtension.png",
     "author": "Olivier Poirier",
+    "background_url": "/?background=1",
     "action": {
       "title": "Owl Soundboard",
       "icon": "/icon.png",
@@ -14,7 +15,7 @@
     "permissions": [
       {
         "name": "autoplay",
-        "reason": "Play synchronized room audio after the user enables audio in the extension."
+        "reason": "Play synchronized room audio for every participant, including while the soundboard panel is closed."
       }
     ]
 }
